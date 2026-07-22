@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>문서 양식 생성 - AX 솔루션 프로토타입</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>문서 양식 생성</h1>
+      <p class="subtitle">회의록·공문·보고서·안내문 등 자주 쓰는 문서 양식에 내용을 입력하면 초안을 만들어줍니다. 브라우저 안에서만 동작하며 서버로 전송되지 않습니다.</p>
+    </header>
+
+    <ol class="steps">
+      <li data-step="1" class="step active"><span>1</span>정보입력</li>
+      <li data-step="2" class="step"><span>2</span>초안생성</li>
+      <li data-step="3" class="step"><span>3</span>미리보기</li>
+      <li data-step="4" class="step"><span>4</span>다운로드</li>
+    </ol>
+
+    <main>
+      <!-- Step 1: 정보입력 -->
+      <section id="panel-1" class="panel active">
+        <div class="option-group">
+          <h3>문서 유형</h3>
+          <div class="radio-row" id="docTypeRow" data-name="docType">
+            <label><input type="radio" name="docType" value="meeting" checked />회의록</label>
+            <label><input type="radio" name="docType" value="memo" />공문</label>
+            <label><input type="radio" name="docType" value="report" />보고서</label>
+            <label><input type="radio" name="docType" value="notice" />안내문</label>
+          </div>
+        </div>
+
+        <div id="fieldForm" class="field-form"></div>
+
+        <div class="option-group">
+          <h3>문체 <button type="button" class="help-icon" data-help="tone" aria-label="문체 도움말">?</button></h3>
+          <div class="radio-row" data-name="tone">
+            <label><input type="radio" name="tone" value="formal" checked />공식적</label>
+            <label><input type="radio" name="tone" value="concise" />간결</label>
+            <label><input type="radio" name="tone" value="detailed" />상세</label>
+          </div>
+        </div>
+
+        <p class="error" id="formError"></p>
+        <div class="actions actions-right">
+          <button id="toStep2" class="btn primary">초안 생성</button>
+        </div>
+      </section>
+
+      <!-- Help popup -->
+      <div class="modal-overlay" id="helpModalOverlay" hidden>
+        <div class="modal-box">
+          <div class="modal-header">
+            <h4 id="helpModalTitle"></h4>
+            <button type="button" class="modal-close" id="helpModalClose" aria-label="닫기">×</button>
+          </div>
+          <ul class="modal-list" id="helpModalList"></ul>
+        </div>
+      </div>
+
+      <!-- Step 2: 초안생성 (편집 가능, 플레인 레이아웃) -->
+      <section id="panel-2" class="panel">
+        <p class="option-desc">생성된 항목의 제목과 본문을 자유롭게 수정할 수 있습니다.</p>
+        <ul class="section-list" id="sectionList"></ul>
+        <div class="actions">
+          <button class="btn ghost" id="regenerateBtn">정보 다시 입력</button>
+          <button id="toStep3" class="btn primary">다음</button>
+        </div>
+      </section>
+
+      <!-- Step 3: 미리보기 (문서 서식 적용, 읽기전용) -->
+      <section id="panel-3" class="panel">
+        <p class="option-desc">실제 문서 서식이 적용된 미리보기입니다. 내용을 고치려면 이전 단계로 돌아가세요.</p>
+        <div class="doc-preview-wrap" id="docPreview"></div>
+        <div class="actions">
+          <button class="btn ghost" data-back="2">이전</button>
+          <button id="toStep4" class="btn primary">다음</button>
+        </div>
+      </section>
+
+      <!-- Step 4: 다운로드 -->
+      <section id="panel-4" class="panel">
+        <p class="demo-note">미리보기 이전 단계에서 수정한 내용이 아래 다운로드 파일에 반영됩니다.</p>
+        <div class="download-row">
+          <button class="btn download-btn" id="downloadDocxBtn">
+            <svg class="download-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 4v11M8 11l4 4 4-4" />
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+            </svg>
+            DOCX 다운로드
+          </button>
+          <button class="btn download-btn" id="downloadPdfBtn">
+            <svg class="download-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 4v11M8 11l4 4 4-4" />
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+            </svg>
+            PDF 다운로드
+          </button>
+        </div>
+        <div class="actions">
+          <button class="btn ghost" data-back="3">미리보기로</button>
+          <button id="restartBtn" class="btn text">새로 만들기</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="vendor/docx.iife.js"></script>
+  <script src="vendor/pdfkit.standalone.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

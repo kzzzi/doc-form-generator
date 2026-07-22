@@ -1,0 +1,541 @@
+@font-face {
+  font-family: "Pretendard";
+  src: url("fonts/Pretendard-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Pretendard";
+  src: url("fonts/Pretendard-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Pretendard";
+  src: url("fonts/Pretendard-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Pretendard";
+  src: url("fonts/Pretendard-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #1f2430;
+  --muted: #6b7280;
+  --border: #e2e5ec;
+  --primary: #3557f0;
+  --primary-hover: #2a45c9;
+  --primary-soft: #f0f3ff;
+  --danger: #d94848;
+  --navy: #0f1f4d;
+  --accent: #c9a227;
+  --accent-soft: #f7f0d8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 40px 20px 80px;
+}
+
+.app-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-top: 0;
+  line-height: 1.6;
+}
+
+.steps {
+  display: flex;
+  list-style: none;
+  padding: 0;
+  margin: 32px 0;
+  gap: 6px;
+}
+
+.step {
+  flex: 1;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  padding-bottom: 10px;
+  border-bottom: 3px solid var(--border);
+  white-space: nowrap;
+}
+
+.step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text);
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+.step.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
+.step.active span {
+  background: var(--primary);
+  color: #fff;
+}
+
+.panel {
+  display: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+}
+
+.panel.active {
+  display: block;
+}
+
+.option-group {
+  margin-bottom: 24px;
+}
+
+.option-group h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+
+.option-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.radio-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.radio-row label {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.radio-row label:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.radio-row input {
+  accent-color: var(--primary);
+}
+
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  vertical-align: middle;
+}
+
+.help-icon:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 18, 30, 0.5);
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal-overlay:not([hidden]) {
+  display: flex;
+}
+
+.modal-box {
+  background: #fff;
+  border-radius: 12px;
+  max-width: 440px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.modal-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+.modal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-list li strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+
+.modal-list li span {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 14px;
+  min-height: 20px;
+}
+
+.demo-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 28px;
+  flex-wrap: wrap;
+}
+
+.actions-right {
+  justify-content: flex-end;
+}
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  padding: 11px 20px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn.primary:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn.text {
+  background: transparent;
+  color: var(--muted);
+}
+
+/* --- Step 1: 정보입력 (동적 필드 폼) --- */
+.field-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-row label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field-row .optional-tag {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.field-row input[type="text"],
+.field-row textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.field-row textarea {
+  min-height: 90px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.field-row input:focus,
+.field-row textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* --- Step 2: 초안생성 (편집 가능한 플레인 섹션 카드) --- */
+.section-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.section-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.section-card-header {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.section-title-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.section-title-input:focus,
+.section-body-textarea:focus {
+  outline: none;
+}
+
+.section-body-textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  border: none;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--text);
+}
+
+/* --- Step 3: 미리보기 (문서 서식) --- */
+.doc-preview-wrap {
+  background: #fdfdfd;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 48px 52px;
+  box-shadow: 0 6px 18px rgba(15, 31, 77, 0.08);
+}
+
+.doc-title {
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0 0 6px;
+}
+
+.doc-underline {
+  width: 64px;
+  height: 3px;
+  background: var(--accent);
+  margin: 0 auto 26px;
+}
+
+.doc-meta-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+  font-size: 13.5px;
+}
+
+.doc-meta-table td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+}
+
+.doc-meta-table td.doc-meta-label {
+  width: 110px;
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.doc-section {
+  margin-bottom: 20px;
+}
+
+.doc-section-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--navy);
+  border-left: 4px solid var(--accent);
+  padding-left: 10px;
+  margin: 0 0 10px;
+}
+
+.doc-section-body {
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
+
+.doc-memo-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.doc-closing {
+  margin-top: 30px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+/* --- Step 4: 다운로드 --- */
+.download-row {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: 6px 0 10px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.download-btn {
+  flex: 1 1 200px;
+  max-width: 240px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 22px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(53, 87, 240, 0.25);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.download-btn:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(53, 87, 240, 0.32);
+}
+
+.download-icon {
+  flex-shrink: 0;
+}
