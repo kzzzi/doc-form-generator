@@ -1,56 +1,184 @@
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : `id-${Math.random().toString(36).slice(2)}`);
 
 // ============================================================
-// 문서 유형별 필드 스키마
+// 문서 유형 감지 + 자유 텍스트에서 필드 추출
+// (구조화된 입력폼 대신, 사용자가 편하게 적은 자유 텍스트 한 덩어리에서
+//  문서 유형과 각 항목 값을 규칙 기반으로 뽑아낸다. LLM을 쓰지 않으므로
+//  "라벨: 값" 형태의 명시적 표기나 흔한 키워드 단서에 의존하며, 단서를
+//  못 찾은 내용은 지어내지 않고 빈 칸으로 남겨 사용자가 다음 단계에서
+//  직접 채우도록 한다.)
 // ============================================================
 
-const DOC_TYPES = {
-  meeting: {
-    label: '회의록',
-    fields: [
-      { key: 'title', label: '제목', type: 'text', required: true, placeholder: '예: 2026년 3분기 AX 솔루션 로드맵 회의' },
-      { key: 'date', label: '일시', type: 'text', required: true, placeholder: '예: 2026. 7. 22.(수) 14:00' },
-      { key: 'place', label: '장소', type: 'text', required: true, placeholder: '예: 본관 3층 대회의실' },
-      { key: 'attendees', label: '참석자', type: 'text', required: true, placeholder: '예: 기획팀 김OO, 운영팀 이OO 등 5명' },
-      { key: 'purpose', label: '목적/안건', type: 'textarea', required: true, placeholder: '이 회의에서 다루는 안건을 적어주세요.' },
-      { key: 'content', label: '주요 논의내용', type: 'textarea', required: true, placeholder: '논의된 내용을 적어주세요. 줄바꿈으로 항목을 구분할 수 있습니다.' },
-      { key: 'decisions', label: '결정사항/향후계획', type: 'textarea', required: false, placeholder: '결정된 사항이나 다음 계획을 적어주세요.' },
-    ],
-  },
-  memo: {
-    label: '공문',
-    fields: [
-      { key: 'title', label: '제목', type: 'text', required: true, placeholder: '예: 2026년 AX 솔루션 설명회 개최 안내' },
-      { key: 'date', label: '날짜', type: 'text', required: true, placeholder: '예: 2026. 7. 22.' },
-      { key: 'recipient', label: '수신', type: 'text', required: true, placeholder: '예: OO팀장' },
-      { key: 'purpose', label: '목적', type: 'textarea', required: true },
-      { key: 'content', label: '주요 내용', type: 'textarea', required: true, placeholder: '줄바꿈으로 항목을 구분할 수 있습니다.' },
-      { key: 'contact', label: '담당자/연락처', type: 'text', required: false, placeholder: '예: 기획팀 김OO (02-000-0000)' },
-    ],
-  },
-  report: {
-    label: '보고서',
-    fields: [
-      { key: 'title', label: '제목', type: 'text', required: true },
-      { key: 'author', label: '작성자', type: 'text', required: true, placeholder: '예: 기획팀 김OO' },
-      { key: 'date', label: '날짜', type: 'text', required: true },
-      { key: 'purpose', label: '목적/배경', type: 'textarea', required: true },
-      { key: 'content', label: '주요 내용', type: 'textarea', required: true, placeholder: '줄바꿈으로 항목을 구분할 수 있습니다.' },
-      { key: 'conclusion', label: '결론 및 제언', type: 'textarea', required: false },
-    ],
-  },
-  notice: {
-    label: '안내문',
-    fields: [
-      { key: 'title', label: '제목', type: 'text', required: true },
-      { key: 'target', label: '대상', type: 'text', required: true, placeholder: '예: 전 직원' },
-      { key: 'date', label: '날짜', type: 'text', required: true },
-      { key: 'purpose', label: '목적', type: 'textarea', required: true },
-      { key: 'content', label: '주요 내용', type: 'textarea', required: true, placeholder: '줄바꿈으로 항목을 구분할 수 있습니다.' },
-      { key: 'inquiry', label: '문의처', type: 'text', required: false, placeholder: '예: 총무팀 (02-000-0000)' },
-    ],
-  },
+const TYPE_META = {
+  tripReport: { label: '출장보고서' },
+  leaveRequest: { label: '휴가신청서' },
+  handover: { label: '업무인수인계서' },
+  plan: { label: '계획서' },
+  meeting: { label: '회의록' },
+  memo: { label: '공문' },
+  report: { label: '보고서' },
+  notice: { label: '안내문' },
 };
+
+// 우선순위 순서대로 검사한다 (더 구체적인 유형을 일반적인 유형보다 먼저 확인).
+const TYPE_DETECTORS = [
+  { type: 'tripReport', patterns: [/출장/] },
+  { type: 'leaveRequest', patterns: [/휴가|연차/] },
+  { type: 'handover', patterns: [/인수인계/] },
+  { type: 'plan', patterns: [/계획서|계획을|추진\s*계획/] },
+  { type: 'meeting', patterns: [/회의록|착수\s*회의|킥오프|회의를/] },
+  { type: 'memo', patterns: [/공문|협조\s*요청/] },
+  { type: 'notice', patterns: [/안내문/] },
+  { type: 'report', patterns: [/보고서|결과\s*보고/] },
+];
+
+function detectDocType(text) {
+  for (const { type, patterns } of TYPE_DETECTORS) {
+    if (patterns.some((re) => re.test(text))) return type;
+  }
+  return 'report';
+}
+
+// 유형별 필드 추출 스키마: label(라벨:값 매칭용) + cues(키워드 단서, 없으면 catch-all로 처리)
+const FIELD_SCHEMAS = {
+  tripReport: [
+    { key: 'destination', label: '출장지', cues: [/출장지/] },
+    { key: 'period', label: '기간', cues: [/기간/], isDateRange: true },
+    { key: 'purpose', label: '목적', cues: [/목적/] },
+    { key: 'outcome', label: '성과', cues: [/성과/] },
+    { key: 'followup', label: '후속조치', cues: [/후속\s*조치/] },
+  ],
+  leaveRequest: [
+    { key: 'period', label: '기간', cues: [/기간/], isDateRange: true },
+    { key: 'reason', label: '사유', cues: [/사유|여행|개인\s*사정|가족/] },
+    { key: 'handover', label: '인수인계', cues: [/인수인계/] },
+    { key: 'emergencyContact', label: '비상연락', cues: [/비상\s*연락|긴급\s*연락/] },
+  ],
+  handover: [
+    { key: 'currentDuties', label: '현재 담당 업무', cues: [/담당\s*업무/] },
+    { key: 'ongoingProjects', label: '진행 중인 프로젝트', cues: [/진행\s*중인?\s*프로젝트|프로젝트/] },
+    { key: 'notes', label: '주의사항', cues: [/주의\s*사항/] },
+    { key: 'contact', label: '연락처', cues: [/연락처/] },
+    { key: 'schedule', label: '향후 일정', cues: [/향후\s*일정/] },
+  ],
+  plan: [
+    { key: 'purpose', label: '도입 목적', cues: [/목적/] },
+    { key: 'target', label: '적용 대상', cues: [/대상/] },
+    { key: 'expectedEffect', label: '예상 효과', cues: [/효과/] },
+    { key: 'schedule', label: '추진 일정', cues: [/일정/] },
+  ],
+  meeting: [
+    { key: 'attendees', label: '참석자', cues: [/참석자/] },
+    { key: 'decisions', label: '결정사항', cues: [/하기로\s*(했|했어|했습니다)|일정은/] },
+    { key: 'content', label: '논의 내용', cues: [] },
+  ],
+  memo: [
+    { key: 'recipient', label: '수신', cues: [/수신/] },
+    { key: 'purpose', label: '목적', cues: [/목적/] },
+    { key: 'content', label: '내용', cues: [] },
+  ],
+  report: [
+    { key: 'purpose', label: '목적', cues: [/목적|배경/] },
+    { key: 'content', label: '내용', cues: [] },
+  ],
+  notice: [
+    { key: 'target', label: '대상', cues: [/대상/] },
+    { key: 'purpose', label: '목적', cues: [/목적/] },
+    { key: 'content', label: '내용', cues: [] },
+  ],
+};
+
+const DOC_TYPE_NAMES = '회의록|공문|보고서|안내문|계획서|인수인계서|휴가\\s*신청서|출장\\s*보고서';
+const INSTRUCTION_VERBS = '만들어\\s*줘|만들어줘|만들고\\s*싶어|만들고자\\s*합니다|정리하고\\s*싶어|정리해야\\s*합니다|정리하려고\\s*합니다|작성해\\s*주세요|작성해주세요|부탁드립니다|하나\\s*만들어줘';
+const LABEL_LINE_RE = /^([가-힣A-Za-z ]{1,12})\s*[:：]\s*(.+)$/;
+const DATE_RANGE_RE = /(\d{1,2}\s*월\s*)?(\d{1,2}\s*일)\s*(?:부터|~|-|에서)\s*(\d{1,2}\s*월\s*)?(\d{1,2}\s*일)\s*(?:까지)?/;
+
+// 문장 끝의 "~해줘/~하고 싶어/~해주세요" 같은 요청 문구를 잘라내
+// 제목 후보나 실제 내용만 남긴다 (도구에게 하는 말이지 문서 내용이 아니므로).
+function stripInstructionTail(line) {
+  let t = line.trim();
+  const withType = new RegExp(`(${DOC_TYPE_NAMES})\\s*(으로|로)?\\s*(${INSTRUCTION_VERBS})\\.?\\s*$`);
+  const bare = new RegExp(`(${INSTRUCTION_VERBS})\\.?\\s*$`);
+  if (withType.test(t)) {
+    t = t.replace(withType, '').trim();
+  } else if (bare.test(t)) {
+    t = t.replace(bare, '').trim();
+  }
+  return t;
+}
+
+function deriveTitle(firstLine, typeLabel) {
+  const cleaned = stripInstructionTail(firstLine || '').replace(/[,，]?\s*(이|가|은|는|을|를)\s*$/, '').trim();
+  return cleaned.length >= 2 ? cleaned : typeLabel;
+}
+
+function extractDateRange(line) {
+  const m = line.match(DATE_RANGE_RE);
+  return m ? m[0].replace(/\s+/g, '') : null;
+}
+
+// 자유 텍스트 한 덩어리를 { type, fields(제목 포함) } 로 변환한다.
+function parseFreeText(rawText, forcedType) {
+  const type = forcedType || detectDocType(rawText);
+  const schema = FIELD_SCHEMAS[type];
+  const rawLines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
+  const title = deriveTitle(rawLines[0], TYPE_META[type].label);
+
+  const fieldValues = {};
+  schema.forEach((f) => { fieldValues[f.key] = []; });
+  const catchAllKey = schema.some((f) => f.key === 'content') ? 'content' : schema[schema.length - 1].key;
+
+  // 첫 줄은 제목으로 이미 소비했으므로 내용 추출 대상에서 제외한다.
+  rawLines.slice(1).forEach((line) => {
+    const labelMatch = line.match(LABEL_LINE_RE);
+    if (labelMatch) {
+      const [, label, value] = labelMatch;
+      const field = schema.find((f) => label.includes(f.label) || f.label.includes(label));
+      if (field) {
+        fieldValues[field.key].push(value.trim());
+        return;
+      }
+    }
+
+    const dateField = schema.find((f) => f.isDateRange);
+    if (dateField) {
+      const range = extractDateRange(line);
+      if (range) {
+        fieldValues[dateField.key].push(range);
+        return;
+      }
+    }
+
+    const cleanedLine = stripInstructionTail(line);
+    if (cleanedLine.length < 2) return;
+
+    // 문서 형식 자체를 지칭하는 줄("~계획서 양식으로")은 내용이 아니라 요청 문구로 판단해 건너뜀
+    if (new RegExp(DOC_TYPE_NAMES).test(cleanedLine)) return;
+
+    let matched = null;
+    for (const field of schema) {
+      if (field.cues.some((re) => re.test(cleanedLine))) {
+        matched = field;
+        break;
+      }
+    }
+
+    const normalized = cleanedLine.replace(/[,，]\s*$/, '').replace(/\s+/g, '');
+    if (matched && normalized === matched.label.replace(/\s+/g, '')) {
+      // 필드 이름만 그대로 반복한 줄(예: "연락처,") -- 실제 내용이 없으므로 비워둔다.
+      return;
+    }
+
+    fieldValues[(matched || schema.find((f) => f.key === catchAllKey)).key].push(cleanedLine);
+  });
+
+  const fields = { title };
+  Object.keys(fieldValues).forEach((key) => {
+    fields[key] = fieldValues[key].join('\n');
+  });
+
+  return { type, fields };
+}
 
 // ============================================================
 // 문체(어투) 변환 -- 실제 문법 엔진이 아니라, 문장 끝맺음과 항목화 방식을
@@ -191,11 +319,91 @@ function buildNotice(f, tone) {
   };
 }
 
+function buildTripReport(f, tone) {
+  const sections = [
+    { id: uuid(), heading: '목적', body: applyTone(f.purpose, tone) },
+    { id: uuid(), heading: '성과', body: applyTone(f.outcome, tone) },
+  ];
+  if ((f.followup || '').trim()) {
+    sections.push({ id: uuid(), heading: '후속조치', body: applyTone(f.followup, tone) });
+  }
+  return {
+    title: f.title || TYPE_META.tripReport.label,
+    meta: [
+      { label: '출장지', value: f.destination || '' },
+      { label: '기간', value: f.period || '' },
+    ],
+    sections,
+    closing: null,
+    footer: '',
+  };
+}
+
+function buildLeaveRequest(f, tone) {
+  const sections = [
+    { id: uuid(), heading: '사유', body: applyTone(f.reason, tone) },
+  ];
+  if ((f.handover || '').trim()) {
+    sections.push({ id: uuid(), heading: '인수인계', body: applyTone(f.handover, tone) });
+  }
+  if ((f.emergencyContact || '').trim()) {
+    sections.push({ id: uuid(), heading: '비상연락', body: applyTone(f.emergencyContact, tone) });
+  }
+  return {
+    title: f.title || TYPE_META.leaveRequest.label,
+    meta: [{ label: '기간', value: f.period || '' }],
+    sections,
+    closing: null,
+    footer: '',
+  };
+}
+
+function buildHandover(f, tone) {
+  const sectionDefs = [
+    ['currentDuties', '현재 담당 업무'],
+    ['ongoingProjects', '진행 중인 프로젝트'],
+    ['notes', '주의사항'],
+    ['contact', '연락처'],
+    ['schedule', '향후 일정'],
+  ];
+  return {
+    title: f.title || TYPE_META.handover.label,
+    meta: [],
+    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: applyTone(f[key], tone) })),
+    closing: null,
+    footer: '',
+  };
+}
+
+function buildPlan(f, tone) {
+  const sectionDefs = [
+    ['purpose', '목적'],
+    ['target', '적용 대상'],
+    ['expectedEffect', '예상 효과'],
+    ['schedule', '추진 일정'],
+  ];
+  return {
+    title: f.title || TYPE_META.plan.label,
+    meta: [],
+    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: applyTone(f[key], tone) })),
+    closing: null,
+    footer: '',
+  };
+}
+
+const DOC_BUILDERS = {
+  tripReport: buildTripReport,
+  leaveRequest: buildLeaveRequest,
+  handover: buildHandover,
+  plan: buildPlan,
+  meeting: buildMeetingMinutes,
+  memo: buildMemo,
+  report: buildReport,
+  notice: buildNotice,
+};
+
 function buildDocument(type, fields, tone) {
-  if (type === 'memo') return buildMemo(fields, tone);
-  if (type === 'report') return buildReport(fields, tone);
-  if (type === 'notice') return buildNotice(fields, tone);
-  return buildMeetingMinutes(fields, tone);
+  return (DOC_BUILDERS[type] || buildReport)(fields, tone);
 }
 
 // ============================================================
@@ -203,8 +411,7 @@ function buildDocument(type, fields, tone) {
 // ============================================================
 
 const state = {
-  docType: 'meeting',
-  fields: {},
+  docType: 'report',
   tone: 'formal',
   document: null,
 };
@@ -269,68 +476,68 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
-// Step 1: 정보입력
+// Step 1: 정보입력 (자유 텍스트 + 자동 감지된 문서 유형)
 // ============================================================
 
-const fieldForm = document.getElementById('fieldForm');
+const freeTextInput = document.getElementById('freeTextInput');
+const freeTextCounter = document.getElementById('freeTextCounter');
+const detectedTag = document.getElementById('detectedTag');
 const formError = document.getElementById('formError');
 const toStep2 = document.getElementById('toStep2');
 
-function renderFieldForm(type) {
-  const schema = DOC_TYPES[type];
-  fieldForm.innerHTML = '';
-  schema.fields.forEach((field) => {
-    const row = document.createElement('div');
-    row.className = 'field-row';
+const MIN_FREETEXT_CHARS = 15;
+let userOverrodeType = false;
 
-    const label = document.createElement('label');
-    label.htmlFor = `field-${field.key}`;
-    label.textContent = field.label;
-    if (!field.required) {
-      const tag = document.createElement('span');
-      tag.className = 'optional-tag';
-      tag.textContent = '(선택)';
-      label.appendChild(tag);
-    }
-    row.appendChild(label);
-
-    const input = document.createElement(field.type === 'textarea' ? 'textarea' : 'input');
-    if (field.type !== 'textarea') input.type = 'text';
-    input.id = `field-${field.key}`;
-    input.placeholder = field.placeholder || '';
-    input.value = state.fields[field.key] || '';
-    input.addEventListener('input', () => {
-      state.fields[field.key] = input.value;
-    });
-    row.appendChild(input);
-
-    fieldForm.appendChild(row);
-  });
+function setDocTypeRadio(type) {
+  const radio = document.querySelector(`input[name="docType"][value="${type}"]`);
+  if (radio) radio.checked = true;
 }
+
+function updateStep1Button() {
+  toStep2.disabled = freeTextInput.value.trim().length < MIN_FREETEXT_CHARS;
+}
+
+freeTextInput.addEventListener('input', () => {
+  const len = freeTextInput.value.trim().length;
+  freeTextCounter.textContent = `${len}자 / 최소 ${MIN_FREETEXT_CHARS}자`;
+  freeTextCounter.classList.toggle('ok', len >= MIN_FREETEXT_CHARS);
+  updateStep1Button();
+  formError.textContent = '';
+
+  if (!userOverrodeType && len > 0) {
+    const detected = detectDocType(freeTextInput.value);
+    setDocTypeRadio(detected);
+    detectedTag.textContent = `감지됨: ${TYPE_META[detected].label}`;
+  } else if (len === 0) {
+    detectedTag.textContent = '입력하면 자동 감지';
+  }
+});
 
 document.querySelectorAll('input[name="docType"]').forEach((radio) => {
   radio.addEventListener('change', () => {
-    state.docType = radio.value;
-    formError.textContent = '';
-    renderFieldForm(state.docType);
+    userOverrodeType = true;
+    detectedTag.textContent = '직접 선택함';
   });
 });
 
 toStep2.addEventListener('click', () => {
-  const schema = DOC_TYPES[state.docType];
-  const missing = schema.fields.filter((f) => f.required && !(state.fields[f.key] || '').trim());
-  if (missing.length > 0) {
-    formError.textContent = `다음 항목을 입력해주세요: ${missing.map((f) => f.label).join(', ')}`;
+  const rawText = freeTextInput.value.trim();
+  if (rawText.length < MIN_FREETEXT_CHARS) {
+    formError.textContent = `최소 ${MIN_FREETEXT_CHARS}자 이상 입력해주세요.`;
     return;
   }
   formError.textContent = '';
+
+  const selectedType = document.querySelector('input[name="docType"]:checked').value;
+  const { fields } = parseFreeText(rawText, selectedType);
+  state.docType = selectedType;
   state.tone = document.querySelector('input[name="tone"]:checked').value;
-  state.document = buildDocument(state.docType, state.fields, state.tone);
+  state.document = buildDocument(state.docType, fields, state.tone);
   renderSectionCards();
   goToStep(2);
 });
 
-renderFieldForm(state.docType);
+updateStep1Button();
 
 // ============================================================
 // Step 2: 초안생성 (편집 가능한 플레인 섹션 카드)
@@ -614,14 +821,18 @@ downloadPdfBtn.addEventListener('click', async () => {
 });
 
 restartBtn.addEventListener('click', () => {
-  state.docType = 'meeting';
-  state.fields = {};
+  state.docType = 'report';
   state.tone = 'formal';
   state.document = null;
-  document.querySelector('input[name="docType"][value="meeting"]').checked = true;
+  userOverrodeType = false;
+  freeTextInput.value = '';
+  freeTextCounter.textContent = `0자 / 최소 ${MIN_FREETEXT_CHARS}자`;
+  freeTextCounter.classList.remove('ok');
+  detectedTag.textContent = '입력하면 자동 감지';
+  setDocTypeRadio('report');
   document.querySelector('input[name="tone"][value="formal"]').checked = true;
   formError.textContent = '';
-  renderFieldForm(state.docType);
+  updateStep1Button();
   sectionList.innerHTML = '';
   docPreview.innerHTML = '';
   goToStep(1);

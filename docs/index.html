@@ -23,17 +23,33 @@
     <main>
       <!-- Step 1: 정보입력 -->
       <section id="panel-1" class="panel active">
+        <div class="freetext-group">
+          <label for="freeTextInput">문서 내용을 자유롭게 입력하세요</label>
+          <textarea id="freeTextInput" class="freetext-input" placeholder="예시:
+
+출장 결과보고서
+
+출장지 : 부산
+기간 : 7월 3일 ~ 7월 4일
+목적 : 고객사 미팅
+성과 : 계약 검토 완료
+후속조치 : 제안서 발송 예정"></textarea>
+          <p class="char-counter" id="freeTextCounter">0자 / 최소 15자</p>
+        </div>
+
         <div class="option-group">
-          <h3>문서 유형</h3>
+          <h3>문서 유형 <span class="detected-tag" id="detectedTag">입력하면 자동 감지</span></h3>
           <div class="radio-row" id="docTypeRow" data-name="docType">
-            <label><input type="radio" name="docType" value="meeting" checked />회의록</label>
+            <label><input type="radio" name="docType" value="tripReport" />출장보고서</label>
+            <label><input type="radio" name="docType" value="leaveRequest" />휴가신청서</label>
+            <label><input type="radio" name="docType" value="handover" />업무인수인계서</label>
+            <label><input type="radio" name="docType" value="plan" />계획서</label>
+            <label><input type="radio" name="docType" value="meeting" />회의록</label>
             <label><input type="radio" name="docType" value="memo" />공문</label>
-            <label><input type="radio" name="docType" value="report" />보고서</label>
+            <label><input type="radio" name="docType" value="report" checked />보고서</label>
             <label><input type="radio" name="docType" value="notice" />안내문</label>
           </div>
         </div>
-
-        <div id="fieldForm" class="field-form"></div>
 
         <div class="option-group">
           <h3>문체 <button type="button" class="help-icon" data-help="tone" aria-label="문체 도움말">?</button></h3>
@@ -46,7 +62,7 @@
 
         <p class="error" id="formError"></p>
         <div class="actions actions-right">
-          <button id="toStep2" class="btn primary">초안 생성</button>
+          <button id="toStep2" class="btn primary" disabled>초안 생성</button>
         </div>
       </section>
 

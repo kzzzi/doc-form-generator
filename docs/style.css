@@ -320,54 +320,57 @@ body {
   color: var(--muted);
 }
 
-/* --- Step 1: 정보입력 (동적 필드 폼) --- */
-.field-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.field-row {
+/* --- Step 1: 정보입력 (자유 텍스트 입력) --- */
+.freetext-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin-bottom: 20px;
 }
 
-.field-row label {
+.freetext-group label {
   font-size: 13px;
   font-weight: 600;
   color: var(--muted);
 }
 
-.field-row .optional-tag {
-  font-weight: 400;
-  color: var(--muted);
-  font-size: 11px;
-  margin-left: 4px;
-}
-
-.field-row input[type="text"],
-.field-row textarea {
+.freetext-input {
   width: 100%;
+  min-height: 220px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 14px 16px;
   font-family: inherit;
   font-size: 14px;
+  line-height: 1.7;
   color: var(--text);
-}
-
-.field-row textarea {
-  min-height: 90px;
-  line-height: 1.6;
   resize: vertical;
 }
 
-.field-row input:focus,
-.field-row textarea:focus {
+.freetext-input:focus {
   outline: none;
   border-color: var(--primary);
+}
+
+.char-counter {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  text-align: right;
+}
+
+.char-counter.ok {
+  color: var(--primary);
+}
+
+.detected-tag {
+  font-weight: 400;
+  color: var(--primary);
+  font-size: 11.5px;
+  margin-left: 6px;
+  background: var(--primary-soft);
+  border-radius: 999px;
+  padding: 2px 9px;
 }
 
 /* --- Step 2: 초안생성 (편집 가능한 플레인 섹션 카드) --- */
