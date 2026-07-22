@@ -68,7 +68,10 @@ const FIELD_SCHEMAS = {
     { key: 'schedule', label: '추진 일정', cues: [/일정/] },
   ],
   meeting: [
+    { key: 'date', label: '일시', cues: [/일시/] },
+    { key: 'place', label: '장소', cues: [/장소/] },
     { key: 'attendees', label: '참석자', cues: [/참석자/] },
+    { key: 'purpose', label: '안건', cues: [/안건|목적/] },
     { key: 'decisions', label: '결정사항', cues: [/하기로\s*(했|했어|했습니다)|일정은/] },
     { key: 'content', label: '논의 내용', cues: [] },
   ],
@@ -76,6 +79,7 @@ const FIELD_SCHEMAS = {
     { key: 'recipient', label: '수신', cues: [/수신/] },
     { key: 'purpose', label: '목적', cues: [/목적/] },
     { key: 'content', label: '내용', cues: [] },
+    { key: 'contact', label: '담당자', cues: [/담당자|연락처/] },
   ],
   report: [
     { key: 'purpose', label: '목적', cues: [/목적|배경/] },
@@ -133,7 +137,7 @@ function parseFreeText(rawText, forcedType) {
     const labelMatch = line.match(LABEL_LINE_RE);
     if (labelMatch) {
       const [, label, value] = labelMatch;
-      const field = schema.find((f) => label.includes(f.label) || f.label.includes(label));
+      const field = schema.find((f) => label.includes(f.label) || f.label.includes(label) || f.cues.some((re) => re.test(label)));
       if (field) {
         fieldValues[field.key].push(value.trim());
         return;
@@ -181,8 +185,12 @@ function parseFreeText(rawText, forcedType) {
 }
 
 // ============================================================
-// 문체(어투) 변환 -- 실제 문법 엔진이 아니라, 문장 끝맺음과 항목화 방식을
-// 규칙 기반으로 바꾸는 근사치 변환이다 (ppt-draft-app의 applyTone과 동일한 접근).
+// 문체(어투) 변환 -- 실제 문법 엔진이 아니라, 문장 끝맺음·항목화 방식·분량을
+// 규칙 기반으로 바꾸는 근사치 변환이다. 세 문체가 실제로 다른 결과물이
+// 되도록 (1) 표기 방식(불릿/연결어/평서문), (2) 분량(축약/유지/서술 확장),
+// (3) 문장 끝맺음을 모두 다르게 처리한다. 사용자가 적지 않은 내용을
+// 지어내지는 않는다 -- "상세"의 확장은 실제 항목을 더 풀어 쓰는 것이지
+// 없는 정보를 추가하는 것이 아니다.
 // ============================================================
 
 const NOMINALIZE_MAP = [
@@ -195,37 +203,44 @@ const NOMINALIZE_MAP = [
   [/한다\.?$/, '함'],
 ];
 
-const ORDINALS = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째'];
+// 상세 문체에서 항목이 여럿일 때 문장 사이를 자연스럽게 잇는 연결어(위치 기반)
+function detailedConnector(i, total) {
+  if (total <= 1) return '';
+  if (i === 0) return '먼저, ';
+  if (i === total - 1) return '마지막으로, ';
+  return '이어서, ';
+}
 
 function applyTone(text, tone) {
   const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean);
   if (items.length === 0) return '';
 
   if (tone === 'concise') {
+    // 간결: 콤마 이전까지만, 명사형으로 축약, 짧게 자르고 불릿으로 -- 가장 분량이 짧다.
     return items
       .map((line) => {
-        let t = line.split(',')[0].trim();
+        let t = line.split(/[,，]/)[0].trim();
         NOMINALIZE_MAP.forEach(([re, rep]) => {
           t = t.replace(re, rep);
         });
-        if (t.length > 60) t = `${t.slice(0, 57).trim()}…`;
+        if (t.length > 36) t = `${t.slice(0, 33).trim()}…`;
         return `• ${t}`;
       })
       .join('\n');
   }
 
   if (tone === 'detailed') {
+    // 상세: 항목을 자르지 않고 완전한 문장으로, 연결어로 풀어써서 -- 가장 분량이 길다.
     return items
       .map((line, i) => {
         let t = line;
         if (t && !/[.!?…]$/.test(t)) t += '.';
-        const prefix = items.length > 1 ? `${ORDINALS[i] || `${i + 1}번째`}, ` : '';
-        return prefix + t;
+        return detailedConnector(i, items.length) + t;
       })
       .join(' ');
   }
 
-  // formal (기본값)
+  // 공식적 (기본값): 평서문 마침표, 불릿/연결어 없이 표준 문어체
   return items
     .map((line) => {
       let t = line;
@@ -235,80 +250,138 @@ function applyTone(text, tone) {
     .join(' ');
 }
 
+// 상세 문체일 때만 항목 앞에 소제목에 맞는 도입 문장을 붙여 서술을 확장한다
+// (분량 차이가 문장 다듬기 수준이 아니라 실제로 체감되도록).
+const SECTION_LEAD_IN_RULES = [
+  [/목적|배경/, '목적은 다음과 같습니다.'],
+  [/안건/, '이번 안건은 다음과 같습니다.'],
+  [/성과/, '주요 성과는 다음과 같습니다.'],
+  [/결론|제언/, '이상의 내용을 종합하면 다음과 같습니다.'],
+  [/결정사항/, '결정된 사항은 다음과 같습니다.'],
+  [/사유/, '사유는 다음과 같습니다.'],
+  [/효과/, '기대되는 효과는 다음과 같습니다.'],
+  [/일정/, '일정은 다음과 같습니다.'],
+];
+
+function sectionLeadIn(heading) {
+  const rule = SECTION_LEAD_IN_RULES.find(([re]) => re.test(heading));
+  return rule ? rule[1] : '세부 내용은 다음과 같습니다.';
+}
+
+function buildSectionBody(heading, rawText, tone) {
+  const toned = applyTone(rawText, tone);
+  if (!toned) return '';
+  return tone === 'detailed' ? `${sectionLeadIn(heading)}\n${toned}` : toned;
+}
+
 // ============================================================
 // 문서 유형별 생성 로직 (템플릿 기반, 외부 AI 없이 규칙으로 조립)
 // ============================================================
 
+// 문서 유형별로 톤에 따라 달라지는 맺음말 (실제 업무 문서에서 흔히 쓰는 정형구).
+const CLOSING_MAP = {
+  memo: {
+    formal: '위 사항에 대해 협조하여 주시기 바랍니다.',
+    concise: '협조 요청드립니다.',
+    detailed: '위와 같은 사항을 안내드리오니, 업무에 참고하시어 원활한 협조가 이루어질 수 있도록 부탁드립니다.',
+  },
+  meeting: {
+    formal: '이상으로 회의를 마칩니다.',
+    concise: '이상.',
+    detailed: '이상 논의된 사항을 바탕으로 각 팀은 향후 일정에 따라 후속 조치를 진행하며, 필요 시 추가 회의를 통해 진행 상황을 점검하기로 하였습니다.',
+  },
+  report: {
+    formal: '이상으로 보고를 마칩니다.',
+    concise: '이상.',
+    detailed: '이상의 내용을 종합적으로 검토한 결과를 바탕으로 향후 후속 조치 계획을 수립하여 순차적으로 추진할 예정입니다.',
+  },
+  tripReport: {
+    formal: '이상으로 출장 결과를 보고합니다.',
+    concise: '이상 보고합니다.',
+    detailed: '이상의 출장 결과를 바탕으로 후속 조치를 차질 없이 진행하고, 필요한 사항은 관련 부서와 협의하여 추진하겠습니다.',
+  },
+  leaveRequest: {
+    formal: '위와 같이 휴가를 신청합니다.',
+    concise: '위와 같이 신청합니다.',
+    detailed: '위 사유로 인해 휴가를 신청하오니 승인하여 주시기 바라며, 부재 기간 중 업무에 차질이 없도록 사전에 충분히 조치하겠습니다.',
+  },
+  plan: {
+    formal: '위와 같이 계획을 수립하여 시행하고자 합니다.',
+    concise: '이상 계획을 보고합니다.',
+    detailed: '이상의 계획을 바탕으로 단계별 추진 상황을 지속적으로 점검하고, 필요 시 세부 일정을 조정하며 계획을 완수하고자 합니다.',
+  },
+};
+
+function closingFor(type, tone) {
+  const byTone = CLOSING_MAP[type];
+  return byTone ? (byTone[tone] || byTone.formal) : null;
+}
+
 function buildMeetingMinutes(f, tone) {
   const sections = [
-    { id: uuid(), heading: '안건', body: applyTone(f.purpose, tone) },
-    { id: uuid(), heading: '논의 내용', body: applyTone(f.content, tone) },
+    { id: uuid(), heading: '안건', body: buildSectionBody('안건', f.purpose, tone) },
+    { id: uuid(), heading: '논의 내용', body: buildSectionBody('논의 내용', f.content, tone) },
   ];
   if ((f.decisions || '').trim()) {
-    sections.push({ id: uuid(), heading: '결정사항 및 향후계획', body: applyTone(f.decisions, tone) });
+    sections.push({ id: uuid(), heading: '결정사항 및 향후계획', body: buildSectionBody('결정사항', f.decisions, tone) });
   }
   return {
-    title: f.title || '회의록',
+    title: f.title || TYPE_META.meeting.label,
     meta: [
       { label: '일시', value: f.date || '' },
       { label: '장소', value: f.place || '' },
       { label: '참석자', value: f.attendees || '' },
     ],
     sections,
-    closing: null,
+    closing: closingFor('meeting', tone),
     footer: '',
   };
 }
 
 function buildMemo(f, tone) {
   const sections = [
-    { id: uuid(), heading: '목적', body: applyTone(f.purpose, tone) },
-    { id: uuid(), heading: '내용', body: applyTone(f.content, tone) },
+    { id: uuid(), heading: '목적', body: buildSectionBody('목적', f.purpose, tone) },
+    { id: uuid(), heading: '내용', body: buildSectionBody('내용', f.content, tone) },
   ];
-  const closingMap = {
-    formal: '위 사항에 대해 협조하여 주시기 바랍니다.',
-    concise: '협조 요청드립니다.',
-    detailed: '위와 같은 사항을 안내드리오니, 업무에 참고하시어 원활한 협조가 이루어질 수 있도록 부탁드립니다.',
-  };
   return {
-    title: f.title || '공문',
+    title: f.title || TYPE_META.memo.label,
     meta: [
       { label: '수신', value: f.recipient || '' },
       { label: '날짜', value: f.date || '' },
     ],
     sections,
-    closing: closingMap[tone] || closingMap.formal,
+    closing: closingFor('memo', tone),
     footer: f.contact || '',
   };
 }
 
 function buildReport(f, tone) {
   const sections = [
-    { id: uuid(), heading: '목적 및 배경', body: applyTone(f.purpose, tone) },
-    { id: uuid(), heading: '주요 내용', body: applyTone(f.content, tone) },
+    { id: uuid(), heading: '목적 및 배경', body: buildSectionBody('목적 및 배경', f.purpose, tone) },
+    { id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) },
   ];
   if ((f.conclusion || '').trim()) {
-    sections.push({ id: uuid(), heading: '결론 및 제언', body: applyTone(f.conclusion, tone) });
+    sections.push({ id: uuid(), heading: '결론 및 제언', body: buildSectionBody('결론 및 제언', f.conclusion, tone) });
   }
   return {
-    title: f.title || '보고서',
+    title: f.title || TYPE_META.report.label,
     meta: [
       { label: '작성자', value: f.author || '' },
       { label: '날짜', value: f.date || '' },
     ],
     sections,
-    closing: null,
+    closing: closingFor('report', tone),
     footer: '',
   };
 }
 
 function buildNotice(f, tone) {
   const sections = [
-    { id: uuid(), heading: '목적', body: applyTone(f.purpose, tone) },
-    { id: uuid(), heading: '주요 내용', body: applyTone(f.content, tone) },
+    { id: uuid(), heading: '목적', body: buildSectionBody('목적', f.purpose, tone) },
+    { id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) },
   ];
   return {
-    title: f.title || '안내문',
+    title: f.title || TYPE_META.notice.label,
     meta: [
       { label: '대상', value: f.target || '' },
       { label: '날짜', value: f.date || '' },
@@ -321,11 +394,11 @@ function buildNotice(f, tone) {
 
 function buildTripReport(f, tone) {
   const sections = [
-    { id: uuid(), heading: '목적', body: applyTone(f.purpose, tone) },
-    { id: uuid(), heading: '성과', body: applyTone(f.outcome, tone) },
+    { id: uuid(), heading: '목적', body: buildSectionBody('목적', f.purpose, tone) },
+    { id: uuid(), heading: '성과', body: buildSectionBody('성과', f.outcome, tone) },
   ];
   if ((f.followup || '').trim()) {
-    sections.push({ id: uuid(), heading: '후속조치', body: applyTone(f.followup, tone) });
+    sections.push({ id: uuid(), heading: '후속조치', body: buildSectionBody('후속조치', f.followup, tone) });
   }
   return {
     title: f.title || TYPE_META.tripReport.label,
@@ -334,26 +407,26 @@ function buildTripReport(f, tone) {
       { label: '기간', value: f.period || '' },
     ],
     sections,
-    closing: null,
+    closing: closingFor('tripReport', tone),
     footer: '',
   };
 }
 
 function buildLeaveRequest(f, tone) {
   const sections = [
-    { id: uuid(), heading: '사유', body: applyTone(f.reason, tone) },
+    { id: uuid(), heading: '사유', body: buildSectionBody('사유', f.reason, tone) },
   ];
   if ((f.handover || '').trim()) {
-    sections.push({ id: uuid(), heading: '인수인계', body: applyTone(f.handover, tone) });
+    sections.push({ id: uuid(), heading: '인수인계', body: buildSectionBody('인수인계', f.handover, tone) });
   }
   if ((f.emergencyContact || '').trim()) {
-    sections.push({ id: uuid(), heading: '비상연락', body: applyTone(f.emergencyContact, tone) });
+    sections.push({ id: uuid(), heading: '비상연락', body: buildSectionBody('비상연락', f.emergencyContact, tone) });
   }
   return {
     title: f.title || TYPE_META.leaveRequest.label,
     meta: [{ label: '기간', value: f.period || '' }],
     sections,
-    closing: null,
+    closing: closingFor('leaveRequest', tone),
     footer: '',
   };
 }
@@ -369,7 +442,7 @@ function buildHandover(f, tone) {
   return {
     title: f.title || TYPE_META.handover.label,
     meta: [],
-    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: applyTone(f[key], tone) })),
+    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: buildSectionBody(heading, f[key], tone) })),
     closing: null,
     footer: '',
   };
@@ -385,8 +458,8 @@ function buildPlan(f, tone) {
   return {
     title: f.title || TYPE_META.plan.label,
     meta: [],
-    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: applyTone(f[key], tone) })),
-    closing: null,
+    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: buildSectionBody(heading, f[key], tone) })),
+    closing: closingFor('plan', tone),
     footer: '',
   };
 }
@@ -602,76 +675,216 @@ function findMeta(doc, label) {
   return m ? m.value : '';
 }
 
-function renderPreview() {
-  const doc = state.document;
-  docPreview.innerHTML = '';
+// 유형별로 실제 사용되는 문서 서식이 다르므로 네 가지 "서식 계열"로 나눠 렌더링한다:
+// official(공문 - 관공서/기업 공문 특유의 수신·제목 정보표 + 번호매김 본문 + "끝." 표기),
+// minutes(회의록 - 일시/장소/참석자 정보표 + 안건별 서술),
+// report(보고서·계획서 - 로마자 번호 소제목),
+// notice(안내문 - 테두리 박스 + 중앙정렬),
+// table(출장보고서·휴가신청서·인수인계서 - 실제 사내 양식처럼 표 형태).
+const FORMAT_FAMILY = {
+  memo: 'official',
+  meeting: 'minutes',
+  report: 'report',
+  plan: 'report',
+  notice: 'notice',
+  tripReport: 'table',
+  leaveRequest: 'table',
+  handover: 'table',
+};
 
+const ROMAN_NUMERALS = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ'];
+
+function appendTitleBlock(doc) {
+  const title = document.createElement('h2');
+  title.className = 'doc-title';
+  title.textContent = doc.title;
+  docPreview.appendChild(title);
+  const underline = document.createElement('div');
+  underline.className = 'doc-underline';
+  docPreview.appendChild(underline);
+}
+
+function formTableRow(label, value) {
+  const tr = document.createElement('tr');
+  const td1 = document.createElement('td');
+  td1.className = 'form-table-label';
+  td1.textContent = label;
+  const td2 = document.createElement('td');
+  td2.className = 'form-table-value';
+  td2.textContent = value;
+  tr.appendChild(td1);
+  tr.appendChild(td2);
+  return tr;
+}
+
+function appendMetaTable(doc) {
+  const filled = doc.meta.filter((m) => m.value);
+  if (filled.length === 0) return;
+  const table = document.createElement('table');
+  table.className = 'doc-meta-table';
+  const tbody = document.createElement('tbody');
+  filled.forEach((m) => tbody.appendChild(formTableRow(m.label, m.value)));
+  table.appendChild(tbody);
+  docPreview.appendChild(table);
+}
+
+function appendClosing(doc) {
+  if (!doc.closing) return;
+  const closing = document.createElement('p');
+  closing.className = 'doc-closing';
+  closing.textContent = doc.closing;
+  docPreview.appendChild(closing);
+}
+
+function appendPlainSection(container, section, headingPrefixEl) {
+  const wrap = document.createElement('div');
+  wrap.className = 'doc-section';
+  const h = document.createElement('h3');
+  h.className = 'doc-section-heading';
+  if (headingPrefixEl) h.appendChild(headingPrefixEl);
+  h.appendChild(document.createTextNode(section.heading));
+  const body = document.createElement('p');
+  body.className = 'doc-section-body';
+  body.textContent = section.body;
+  wrap.appendChild(h);
+  wrap.appendChild(body);
+  container.appendChild(wrap);
+}
+
+// --- official: 공문 서식 (수신/제목 정보표 + 번호매김 본문 + "끝." 표기) ---
+function renderOfficialFormat(doc) {
   const title = document.createElement('h2');
   title.className = 'doc-title';
   title.textContent = doc.title;
   docPreview.appendChild(title);
 
+  const infoTable = document.createElement('table');
+  infoTable.className = 'official-info-table';
+  const infoBody = document.createElement('tbody');
+  infoBody.appendChild(formTableRow('수신', findMeta(doc, '수신') || '관련 부서'));
+  if (findMeta(doc, '날짜')) infoBody.appendChild(formTableRow('시행일자', findMeta(doc, '날짜')));
+  infoBody.appendChild(formTableRow('제목', doc.title));
+  infoTable.appendChild(infoBody);
+  docPreview.appendChild(infoTable);
+
+  const body = document.createElement('div');
+  body.className = 'official-body';
+  doc.sections.forEach((section, i) => {
+    const p = document.createElement('p');
+    p.className = 'official-numbered-para';
+    const marker = document.createElement('span');
+    marker.className = 'official-number';
+    marker.textContent = `${i + 1}. `;
+    p.appendChild(marker);
+    const label = document.createElement('strong');
+    label.textContent = `${section.heading}: `;
+    p.appendChild(label);
+    p.appendChild(document.createTextNode(section.body || ''));
+    body.appendChild(p);
+  });
+  if (doc.closing) {
+    const closingP = document.createElement('p');
+    closingP.className = 'official-numbered-para';
+    closingP.textContent = doc.closing;
+    body.appendChild(closingP);
+  }
+  docPreview.appendChild(body);
+
+  const endMark = document.createElement('p');
+  endMark.className = 'official-end-mark';
+  endMark.textContent = '끝.';
+  docPreview.appendChild(endMark);
+
+  if (doc.footer) {
+    const footer = document.createElement('div');
+    footer.className = 'official-signature';
+    footer.textContent = `담당자  ${doc.footer}`;
+    docPreview.appendChild(footer);
+  }
+}
+
+// --- minutes: 회의록 서식 (일시/장소/참석자 정보표 + 안건별 서술) ---
+function renderMinutesFormat(doc) {
+  appendTitleBlock(doc);
+  appendMetaTable(doc);
+  doc.sections.forEach((section) => appendPlainSection(docPreview, section));
+  appendClosing(doc);
+}
+
+// --- report: 보고서/계획서 서식 (로마자 번호 소제목) ---
+function renderReportFormat(doc) {
+  appendTitleBlock(doc);
+  appendMetaTable(doc);
+  doc.sections.forEach((section, i) => {
+    const marker = document.createElement('span');
+    marker.className = 'roman-marker';
+    marker.textContent = `${ROMAN_NUMERALS[i] || i + 1}. `;
+    appendPlainSection(docPreview, section, marker);
+  });
+  appendClosing(doc);
+}
+
+// --- notice: 안내문 서식 (테두리 박스 + 중앙정렬) ---
+function renderNoticeFormat(doc) {
+  const box = document.createElement('div');
+  box.className = 'notice-box';
+
+  const title = document.createElement('h2');
+  title.className = 'doc-title';
+  title.textContent = doc.title;
+  box.appendChild(title);
   const underline = document.createElement('div');
   underline.className = 'doc-underline';
-  docPreview.appendChild(underline);
+  box.appendChild(underline);
 
-  if (state.docType === 'memo') {
-    const header = document.createElement('div');
-    header.className = 'doc-memo-header';
-    const left = document.createElement('span');
-    left.textContent = `수신: ${findMeta(doc, '수신')}`;
-    const right = document.createElement('span');
-    right.textContent = findMeta(doc, '날짜');
-    header.appendChild(left);
-    header.appendChild(right);
-    docPreview.appendChild(header);
-  } else {
-    const table = document.createElement('table');
-    table.className = 'doc-meta-table';
-    const tbody = document.createElement('tbody');
-    doc.meta.filter((m) => m.value).forEach((m) => {
-      const tr = document.createElement('tr');
-      const td1 = document.createElement('td');
-      td1.className = 'doc-meta-label';
-      td1.textContent = m.label;
-      const td2 = document.createElement('td');
-      td2.textContent = m.value;
-      tr.appendChild(td1);
-      tr.appendChild(td2);
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    docPreview.appendChild(table);
+  const filled = doc.meta.filter((m) => m.value);
+  if (filled.length > 0) {
+    const metaLine = document.createElement('p');
+    metaLine.className = 'notice-meta-line';
+    metaLine.textContent = filled.map((m) => `${m.label}: ${m.value}`).join('   |   ');
+    box.appendChild(metaLine);
   }
 
-  doc.sections.forEach((section) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'doc-section';
-    const h = document.createElement('h3');
-    h.className = 'doc-section-heading';
-    h.textContent = section.heading;
-    const body = document.createElement('p');
-    body.className = 'doc-section-body';
-    body.textContent = section.body;
-    wrap.appendChild(h);
-    wrap.appendChild(body);
-    docPreview.appendChild(wrap);
-  });
+  doc.sections.forEach((section) => appendPlainSection(box, section));
+  docPreview.appendChild(box);
 
   if (doc.closing) {
     const closing = document.createElement('p');
-    closing.className = 'doc-closing';
+    closing.className = 'notice-inquiry-box';
     closing.textContent = doc.closing;
     docPreview.appendChild(closing);
   }
-  if (doc.footer) {
-    const footer = document.createElement('p');
-    footer.className = 'doc-section-body';
-    footer.style.textAlign = 'right';
-    footer.style.marginTop = '20px';
-    footer.textContent = doc.footer;
-    docPreview.appendChild(footer);
-  }
+}
+
+// --- table: 출장보고서/휴가신청서/업무인수인계서 서식 (사내 양식처럼 표 형태) ---
+function renderTableFormat(doc) {
+  appendTitleBlock(doc);
+
+  const table = document.createElement('table');
+  table.className = 'doc-form-table';
+  const tbody = document.createElement('tbody');
+  doc.meta.filter((m) => m.value).forEach((m) => tbody.appendChild(formTableRow(m.label, m.value)));
+  doc.sections.forEach((section) => tbody.appendChild(formTableRow(section.heading, section.body || '-')));
+  table.appendChild(tbody);
+  docPreview.appendChild(table);
+
+  appendClosing(doc);
+}
+
+const FORMAT_RENDERERS = {
+  official: renderOfficialFormat,
+  minutes: renderMinutesFormat,
+  report: renderReportFormat,
+  notice: renderNoticeFormat,
+  table: renderTableFormat,
+};
+
+function renderPreview() {
+  const doc = state.document;
+  docPreview.innerHTML = '';
+  const family = FORMAT_FAMILY[state.docType] || 'report';
+  docPreview.className = `doc-preview-wrap format-${family}`;
+  (FORMAT_RENDERERS[family] || renderReportFormat)(doc);
 }
 
 toStep4.addEventListener('click', () => {
