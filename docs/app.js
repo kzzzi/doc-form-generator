@@ -175,6 +175,7 @@ const CRITICAL_FIELDS = {
 // 쉽게 알아보고 고칠 수 있게 일반적인 예시 표현을 쓴다.
 const DUMMY_VALUES = {
   traveler: '홍길동 과장',
+  destination: '부산',
   visitOrg: '협력사 OOO',
   applicant: '홍길동',
   department: '기획팀',
@@ -207,10 +208,22 @@ function dummyFor(key) {
   return DUMMY_VALUES[key] || '내용 미정(예시)';
 }
 
+// 문장형 서술어로 끝나는지 판단 -- "이름/직급"처럼 단답이어야 할 항목에
+// 사용자가 쓴 문장을 그대로 옮겨 담지 않기 위한 용도.
+const SENTENCE_ENDING_RE = /(다|요|죠|네|어|아|해|야|음|함|됨|임|든|지|까|구요|드립니다|바랍니다|습니다|합니다|입니다|는데|한데|근데)\.?\s*$/;
+function looksLikeSentence(text) {
+  return SENTENCE_ENDING_RE.test((text || '').trim());
+}
+
+// 이름+직급처럼 단답이어야 하는 항목 -- 문장형으로 들어오면 그대로 쓰지 않고 더미로 대체한다.
+const PERSON_LIKE_FIELDS = ['traveler', 'applicant', 'handoverFrom', 'handoverTo', 'attendees', 'author', 'reportTarget', 'recipient'];
+
 // 핵심 항목이 비어 있으면 더미 값으로, 그 외 선택 항목은 빈 문자열 그대로 둔다.
+// 이름/직급류 항목에 문장이 통째로 들어온 경우도 더미로 대체한다.
 function checkField(type, fields, key) {
   const v = (fields[key] || '').trim();
-  if (v) return v;
+  const rejectAsSentence = v && PERSON_LIKE_FIELDS.includes(key) && looksLikeSentence(v);
+  if (v && !rejectAsSentence) return v;
   return (CRITICAL_FIELDS[type] || []).includes(key) ? dummyFor(key) : '';
 }
 
@@ -235,12 +248,31 @@ function stripInstructionTail(line) {
 
 function deriveTitle(firstLine, typeLabel) {
   const cleaned = stripInstructionTail(firstLine || '').replace(/[,，]?\s*(이|가|은|는|을|를)\s*$/, '').trim();
-  return cleaned.length >= 2 ? cleaned : typeLabel;
+  // 제목은 문서 종류를 나타내는 명사구여야지, 사용자가 캐주얼하게 적은 문장을
+  // 그대로 옮겨서는 안 된다 (예: "부산 갔다왔어" -> 출장보고서, 원문 그대로 X).
+  if (cleaned.length < 2 || looksLikeSentence(cleaned)) return typeLabel;
+  return cleaned;
 }
 
 function extractDateRange(line) {
   const m = line.match(DATE_RANGE_RE);
   return m ? m[0].replace(/\s+/g, '') : null;
+}
+
+// 짧은 단답형(이름/장소/기관명 등) 항목은 "출장지는 부산이야" 같은 서술식 문장으로
+// 와도 조사+서술어를 떼어내고 핵심 값만 남긴다. 서술형 문장을 그대로 옮기면 안 되는
+// 항목에만 적용하며(narrative 항목은 문장 전체가 곧 내용이므로 제외), 패턴이
+// 안 맞으면 원래 줄을 그대로 둔다.
+const IDENTITY_FIELD_KEYS = [
+  'destination', 'visitOrg', 'department', 'position', 'leaveType', 'days',
+  'applyDate', 'handoverDate', 'materialsLocation', 'contact', 'place',
+  'deadline', 'inquiry', 'method', 'nextMeeting', 'target',
+];
+const COPULA_VALUE_RE = /(?:이|가|은|는)\s*(.+?)\s*(?:이야|야|이다|이었다|였다|입니다|였습니다|이었습니다|임|예요|이에요)\.?$/;
+
+function extractIdentityValue(line) {
+  const m = line.match(COPULA_VALUE_RE);
+  return m && m[1].trim().length >= 1 ? m[1].trim() : null;
 }
 
 // 자유 텍스트 한 덩어리를 { type, fields(제목 포함) } 로 변환한다.
@@ -296,7 +328,11 @@ function parseFreeText(rawText, forcedType) {
       return;
     }
 
-    fieldValues[(matched || schema.find((f) => f.key === catchAllKey)).key].push(cleanedLine);
+    let valueToStore = cleanedLine;
+    if (matched && IDENTITY_FIELD_KEYS.includes(matched.key)) {
+      valueToStore = extractIdentityValue(cleanedLine) || cleanedLine;
+    }
+    fieldValues[(matched || schema.find((f) => f.key === catchAllKey)).key].push(valueToStore);
   });
 
   const fields = { title };
@@ -326,6 +362,53 @@ const NOMINALIZE_MAP = [
   [/한다\.?$/, '함'],
 ];
 
+// 사용자가 반말/구어체로 적어도 업무 문서는 정중한 보고체로 나가야 한다.
+// 문법 엔진이 아니라 자주 쓰는 어미 위주의 근사치 치환이며, 더 구체적인
+// 패턴을 먼저 검사해 일반적인 "-어요/-아요" 치환이 앞서 소비하지 않게 한다.
+const CASUAL_TO_FORMAL_MAP = [
+  [/하고\s*싶어(요)?\.?$/, '하고자 합니다'],
+  [/싶어(요)?\.?$/, '하고자 합니다'],
+  [/할\s*거예요\.?$/, '할 예정입니다'],
+  [/거예요\.?$/, '예정입니다'],
+  [/거야\.?$/, '예정입니다'],
+  [/할게(요)?\.?$/, '하겠습니다'],
+  [/할래(요)?\.?$/, '하겠습니다'],
+  [/했었어(요)?\.?$/, '했었습니다'],
+  [/했었다\.?$/, '했었습니다'],
+  [/갔다\s*왔어(요)?\.?$/, '다녀왔습니다'],
+  [/갔어(요)?\.?$/, '다녀왔습니다'],
+  [/왔어(요)?\.?$/, '왔습니다'],
+  [/줬어(요)?\.?$/, '주었습니다'],
+  [/봤어(요)?\.?$/, '보았습니다'],
+  [/좋아(요)?\.?$/, '좋습니다'],
+  [/괜찮아(요)?\.?$/, '무방합니다'],
+  [/했어(요)?\.?$/, '했습니다'],
+  [/이었다\.?$/, '이었습니다'],
+  [/였다\.?$/, '였습니다'],
+  [/였어(요)?\.?$/, '였습니다'],
+  [/했다\.?$/, '했습니다'],
+  [/한다\.?$/, '합니다'],
+  [/거든(요)?\.?$/, '습니다'],
+  [/네(요)?\.?$/, '습니다'],
+  [/([가-힣])야\.?$/, '$1입니다'],
+  [/이에요\.?$/, '입니다'],
+  [/예요\.?$/, '입니다'],
+  [/에요\.?$/, '습니다'],
+  [/아요\.?$/, '습니다'],
+  [/어요\.?$/, '습니다'],
+];
+
+function formalizeRegister(line) {
+  let t = line;
+  for (const [re, rep] of CASUAL_TO_FORMAL_MAP) {
+    if (re.test(t)) {
+      t = t.replace(re, rep);
+      break;
+    }
+  }
+  return t;
+}
+
 // 상세 문체에서 항목이 여럿일 때 문장 사이를 자연스럽게 잇는 연결어(위치 기반)
 function detailedConnector(i, total) {
   if (total <= 1) return '';
@@ -341,7 +424,7 @@ function applyTone(text, tone, register) {
   if (items.length === 0) return '';
 
   const finish = (line) => {
-    let t = line;
+    let t = formalizeRegister(line);
     if (register === 'record') {
       NOMINALIZE_MAP.forEach(([re, rep]) => {
         t = t.replace(re, rep);
@@ -355,7 +438,7 @@ function applyTone(text, tone, register) {
     // 간결: 콤마 이전까지만, 명사형으로 축약, 짧게 자르고 불릿으로 -- 가장 분량이 짧다.
     return items
       .map((line) => {
-        let t = line.split(/[,，]/)[0].trim();
+        let t = formalizeRegister(line.split(/[,，]/)[0].trim());
         NOMINALIZE_MAP.forEach(([re, rep]) => {
           t = t.replace(re, rep);
         });
@@ -380,14 +463,17 @@ function applyTone(text, tone, register) {
 function alwaysItemize(text, max) {
   const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean).slice(0, max || 4);
   if (items.length === 0) return '';
-  return items.map((t) => `• ${t.replace(/[.!?…]+$/, '')}`).join('\n');
+  return items.map((t) => `• ${formalizeRegister(t).replace(/[.!?…]+$/, '')}`).join('\n');
 }
 
 // 문체와 무관하게 항상 짧게 유지한다 (예: 휴가신청서의 "사유"는 상세 문체를 골라도 장황해지면 안 됨).
 function briefSentences(text, maxSentences) {
   const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean).slice(0, maxSentences || 2);
   if (items.length === 0) return '';
-  return items.map((t) => (/[.!?…]$/.test(t) ? t : `${t}.`)).join(' ');
+  return items.map((line) => {
+    const t = formalizeRegister(line);
+    return /[.!?…]$/.test(t) ? t : `${t}.`;
+  }).join(' ');
 }
 
 // 공문 본문 전용: 항목이 여럿이면 줄바꿈을 유지해 렌더러가 "가./나./다."로
@@ -398,7 +484,7 @@ function buildOfficialBody(text, tone) {
   if (tone === 'concise') {
     return items
       .map((line) => {
-        let t = line.split(/[,，]/)[0].trim();
+        let t = formalizeRegister(line.split(/[,，]/)[0].trim());
         NOMINALIZE_MAP.forEach(([re, rep]) => {
           t = t.replace(re, rep);
         });
@@ -409,7 +495,7 @@ function buildOfficialBody(text, tone) {
   }
   return items
     .map((line) => {
-      let t = line;
+      let t = formalizeRegister(line);
       if (t && !/[.!?…]$/.test(t)) t += '.';
       return t;
     })
