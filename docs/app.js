@@ -230,7 +230,10 @@ function checkField(type, fields, key) {
 const DOC_TYPE_NAMES = '회의록|공문|보고서|안내문|계획서|인수인계서|휴가\\s*신청서|출장\\s*보고서';
 const INSTRUCTION_VERBS = '만들어\\s*줘|만들어줘|만들고\\s*싶어|만들고자\\s*합니다|정리하고\\s*싶어|정리해야\\s*합니다|정리하려고\\s*합니다|작성해\\s*주세요|작성해주세요|부탁드립니다|하나\\s*만들어줘';
 const LABEL_LINE_RE = /^([가-힣A-Za-z ]{1,12})\s*[:：]\s*(.+)$/;
-const DATE_RANGE_RE = /(\d{1,2}\s*월\s*)?(\d{1,2}\s*일)\s*(?:부터|~|-|에서)\s*(\d{1,2}\s*월\s*)?(\d{1,2}\s*일)\s*(?:까지)?/;
+const WEEKDAY_RE = '(?:월|화|수|목|금|토|일)요일';
+const DATE_RANGE_RE = new RegExp(
+  `(\\d{1,2}\\s*월\\s*)?(\\d{1,2}\\s*일)\\s*(?:${WEEKDAY_RE}\\s*)?(?:부터|~|-|에서)\\s*(\\d{1,2}\\s*월\\s*)?(\\d{1,2}\\s*일)\\s*(?:${WEEKDAY_RE}\\s*)?(?:까지)?`
+);
 
 // 문장 끝의 "~해줘/~하고 싶어/~해주세요" 같은 요청 문구를 잘라내
 // 제목 후보나 실제 내용만 남긴다 (도구에게 하는 말이지 문서 내용이 아니므로).
@@ -246,11 +249,25 @@ function stripInstructionTail(line) {
   return t;
 }
 
+// "~하는 내용으로", "~에 대해", "~신청하는" 처럼 문서 종류를 설명하는 도중에
+// 나오는 어구 -- 이런 어구가 있으면 끝에 문서 종류 명사가 와도 실제 제목이
+// 아니라 사용자가 도구에게 상황을 설명한 문장일 뿐이다.
+const TITLE_DESCRIPTIVE_MARKER_RE = /(내용으로|하는\s*내용|관련하여|에\s*대해|에\s*대한|신청하는|작성하는|요청하는|보고하는|공유하는|정리하는)/;
+const TITLE_MAX_LEN = 26;
+
 function deriveTitle(firstLine, typeLabel) {
   const cleaned = stripInstructionTail(firstLine || '').replace(/[,，]?\s*(이|가|은|는|을|를)\s*$/, '').trim();
-  // 제목은 문서 종류를 나타내는 명사구여야지, 사용자가 캐주얼하게 적은 문장을
-  // 그대로 옮겨서는 안 된다 (예: "부산 갔다왔어" -> 출장보고서, 원문 그대로 X).
-  if (cleaned.length < 2 || looksLikeSentence(cleaned)) return typeLabel;
+  // 제목은 문서 종류를 나타내는 짧은 명사구여야지, 사용자가 도구에게 상황을
+  // 설명하며 캐주얼하게 적은 문장이나 긴 서술을 그대로 옮겨서는 안 된다
+  // (예: "부산 갔다왔어" -> 출장보고서, "...신청하는 내용으로 휴가신청서" -> 휴가신청서).
+  if (
+    cleaned.length < 2 ||
+    cleaned.length > TITLE_MAX_LEN ||
+    looksLikeSentence(cleaned) ||
+    TITLE_DESCRIPTIVE_MARKER_RE.test(cleaned)
+  ) {
+    return typeLabel;
+  }
   return cleaned;
 }
 
@@ -286,7 +303,16 @@ function parseFreeText(rawText, forcedType) {
   schema.forEach((f) => { fieldValues[f.key] = []; });
   const catchAllKey = CATCH_ALL_KEY[type] || schema[schema.length - 1].key;
 
-  // 첫 줄은 제목으로 이미 소비했으므로 내용 추출 대상에서 제외한다.
+  // 첫 줄은 제목으로 소비하고 내용 추출 대상에서는 제외하지만, "9월 7일 월요일부터
+  // 9월 9일 수요일까지 총 3일간 연차휴가를 신청하는 내용으로..."처럼 날짜 구간이
+  // 첫 줄에만 적혀 있는 경우가 흔하므로 날짜 구간만은 별도로 건져낸다.
+  const dateFieldSchema = schema.find((f) => f.isDateRange);
+  if (dateFieldSchema) {
+    const firstLineRange = extractDateRange(rawLines[0] || '');
+    if (firstLineRange) fieldValues[dateFieldSchema.key].push(firstLineRange);
+  }
+
+  // 나머지 줄에서 라벨/단서 기반으로 항목을 채운다.
   rawLines.slice(1).forEach((line) => {
     const labelMatch = line.match(LABEL_LINE_RE);
     if (labelMatch) {
