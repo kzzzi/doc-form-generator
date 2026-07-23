@@ -4,9 +4,9 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : `id-${Math.random(
 // 문서 유형 감지 + 자유 텍스트에서 필드 추출
 // (구조화된 입력폼 대신, 사용자가 편하게 적은 자유 텍스트 한 덩어리에서
 //  문서 유형과 각 항목 값을 규칙 기반으로 뽑아낸다. LLM을 쓰지 않으므로
-//  "라벨: 값" 형태의 명시적 표기나 흔한 키워드 단서에 의존하며, 단서를
-//  못 찾은 내용은 지어내지 않고 빈 칸으로 남겨 사용자가 다음 단계에서
-//  직접 채우도록 한다.)
+//  "라벨: 값" 형태의 명시적 표기나 흔한 키워드 단서에 의존하며, 핵심 항목의
+//  단서를 못 찾으면 바로 검토·수정할 수 있도록 예시 성격의 더미 값을 채워
+//  넣는다.)
 // ============================================================
 
 const TYPE_META = {
@@ -158,7 +158,7 @@ const CATCH_ALL_KEY = {
 };
 
 // 유형별로 "이게 없으면 문서 자체가 성립하지 않는" 핵심 항목 -- 비어 있으면
-// 지어내지 않고 "확인 필요"로 표시한다 (날짜/이름/장소/담당자/기한 등).
+// 예시 더미 값(DUMMY_VALUES)으로 채운다 (날짜/이름/장소/담당자/기한 등).
 const CRITICAL_FIELDS = {
   tripReport: ['traveler', 'period', 'destination', 'visitOrg'],
   leaveRequest: ['applicant', 'department', 'period'],
@@ -170,13 +170,48 @@ const CRITICAL_FIELDS = {
   notice: ['target', 'period', 'method', 'inquiry'],
 };
 
-const NEEDS_CHECK = '확인 필요';
+// 핵심 항목이 비어 있을 때 채워 넣는 예시(더미) 값 -- 실제 문서에 바로 쓰기보다는
+// "이런 형식으로 채우면 된다"를 보여주는 자리표시자이므로 사용자가 다음 단계에서
+// 쉽게 알아보고 고칠 수 있게 일반적인 예시 표현을 쓴다.
+const DUMMY_VALUES = {
+  traveler: '홍길동 과장',
+  visitOrg: '협력사 OOO',
+  applicant: '홍길동',
+  department: '기획팀',
+  handoverFrom: '홍길동',
+  handoverTo: '김철수',
+  attendees: '관련 부서 담당자',
+  recipient: '관련 부서장',
+  reportTarget: '관련 부서장',
+  author: '작성자 미상',
+  date: '2026. 7. 23.',
+  handoverDate: '2026. 7. 23.',
+  period: '2026. 7. 24. ~ 2026. 7. 25.',
+  deadline: '문서 시행일로부터 7일 이내',
+  place: '본사 회의실',
+  materialsLocation: '사내 공유 드라이브',
+  attachment: '해당 없음',
+  reviewResult: '세부 검토를 통해 개선 여지를 확인함.',
+  method: '담당 부서를 통해 신청',
+  inquiry: '담당 부서',
+  target: '관련 부서 전체',
+  schedule: '1개월간 단계적으로 추진',
+  expectedEffect: '• 업무 효율성 향상\n• 비용 절감\n• 담당자 만족도 개선',
+  outcome: '계획한 목표 수준의 성과를 달성함.',
+  followup: '관련 부서와 협의하여 후속 조치를 진행함.',
+  reason: '개인 사정으로 인한 휴가 사용.',
+  title: '문서 제목(예시)',
+};
 
-// 핵심 항목이 비어 있으면 "확인 필요"로, 그 외 선택 항목은 빈 문자열 그대로 둔다.
+function dummyFor(key) {
+  return DUMMY_VALUES[key] || '내용 미정(예시)';
+}
+
+// 핵심 항목이 비어 있으면 더미 값으로, 그 외 선택 항목은 빈 문자열 그대로 둔다.
 function checkField(type, fields, key) {
   const v = (fields[key] || '').trim();
   if (v) return v;
-  return (CRITICAL_FIELDS[type] || []).includes(key) ? NEEDS_CHECK : '';
+  return (CRITICAL_FIELDS[type] || []).includes(key) ? dummyFor(key) : '';
 }
 
 const DOC_TYPE_NAMES = '회의록|공문|보고서|안내문|계획서|인수인계서|휴가\\s*신청서|출장\\s*보고서';
@@ -495,7 +530,7 @@ function buildMemo(f, tone) {
   }
 
   return {
-    title: f.title && f.title !== TYPE_META.memo.label ? f.title : NEEDS_CHECK,
+    title: f.title && f.title !== TYPE_META.memo.label ? f.title : dummyFor('title'),
     meta: [{ label: '수신', value: checkField('memo', f, 'recipient') }],
     sections,
     closing: closingFor('memo', tone),
@@ -514,7 +549,7 @@ function buildReport(f, tone) {
   sections.push({
     id: uuid(),
     heading: '검토 결과',
-    body: (f.reviewResult || '').trim() ? buildSectionBody('검토 결과', f.reviewResult, tone) : NEEDS_CHECK,
+    body: (f.reviewResult || '').trim() ? buildSectionBody('검토 결과', f.reviewResult, tone) : dummyFor('reviewResult'),
   });
   sections.push({ id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) });
   if ((f.progress || '').trim()) sections.push({ id: uuid(), heading: '추진 현황', body: buildSectionBody('추진 현황', f.progress, tone) });
@@ -536,7 +571,7 @@ function buildReport(f, tone) {
   };
 }
 
-// 안내문: 공문보다 친절한 어투. 신청/참여 방법과 문의처는 필수로 확인 필요 표시 대상.
+// 안내문: 공문보다 친절한 어투. 신청/참여 방법과 문의처는 비어 있으면 더미 값 대상.
 function buildNotice(f, tone) {
   const sections = [
     { id: uuid(), heading: '안내 목적', body: buildSectionBody('안내 목적', f.purpose, tone) },
@@ -544,7 +579,7 @@ function buildNotice(f, tone) {
     {
       id: uuid(),
       heading: '신청/참여 방법',
-      body: (f.method || '').trim() ? buildSectionBody('신청 방법', f.method, tone) : NEEDS_CHECK,
+      body: (f.method || '').trim() ? buildSectionBody('신청 방법', f.method, tone) : dummyFor('method'),
     },
   ];
   if ((f.notes || '').trim()) {
@@ -570,7 +605,7 @@ function buildNotice(f, tone) {
   };
 }
 
-// 출장보고서: 사실/결과 중심. 출장 결과와 향후 조치는 "반드시" 포함(비어 있으면 확인 필요).
+// 출장보고서: 사실/결과 중심. 출장 결과와 향후 조치는 "반드시" 포함(비어 있으면 더미 값).
 function buildTripReport(f, tone) {
   const sections = [];
   if ((f.purpose || '').trim()) sections.push({ id: uuid(), heading: '출장 목적', body: buildSectionBody('출장 목적', f.purpose, tone) });
@@ -582,12 +617,12 @@ function buildTripReport(f, tone) {
   sections.push({
     id: uuid(),
     heading: '출장 결과',
-    body: (f.outcome || '').trim() ? buildSectionBody('출장 결과', f.outcome, tone) : NEEDS_CHECK,
+    body: (f.outcome || '').trim() ? buildSectionBody('출장 결과', f.outcome, tone) : dummyFor('outcome'),
   });
   sections.push({
     id: uuid(),
     heading: '향후 조치',
-    body: (f.followup || '').trim() ? buildSectionBody('향후 조치', f.followup, tone) : NEEDS_CHECK,
+    body: (f.followup || '').trim() ? buildSectionBody('향후 조치', f.followup, tone) : dummyFor('followup'),
   });
   if ((f.notes || '').trim()) sections.push({ id: uuid(), heading: '특이사항', body: buildSectionBody('특이사항', f.notes, tone) });
 
@@ -608,7 +643,7 @@ function buildTripReport(f, tone) {
 // 휴가신청서: 사유는 문체와 무관하게 항상 1~2문장으로 짧게 유지한다.
 function buildLeaveRequest(f, tone) {
   const sections = [
-    { id: uuid(), heading: '휴가 사유', body: briefSentences(f.reason, 2) || NEEDS_CHECK },
+    { id: uuid(), heading: '휴가 사유', body: briefSentences(f.reason, 2) || dummyFor('reason') },
   ];
   if ((f.handover || '').trim()) {
     sections.push({ id: uuid(), heading: '업무 인수인계 내용', body: buildSectionBody('업무 인수인계 내용', f.handover, tone) });
@@ -633,7 +668,7 @@ function buildLeaveRequest(f, tone) {
   };
 }
 
-// 업무인수인계서: 실무 중심 표 형태. 인계자/인수자/일자/자료 위치는 확인 필요 대상.
+// 업무인수인계서: 실무 중심 표 형태. 인계자/인수자/일자/자료 위치는 더미 값 대상.
 function buildHandover(f, tone) {
   const sectionDefs = [
     ['targetDuties', '인수인계 대상 업무', false],
@@ -663,7 +698,7 @@ function buildHandover(f, tone) {
 
 // 계획서: 배경→목적→대상→내용→일정→기대효과→유의사항→향후계획 순. 기대효과는
 // 문체와 무관하게 항상 2~4개 항목으로 정리하고, 실행계획처럼 보이도록 일정/대상/
-// 기대효과가 비어 있으면 확인 필요로 표시한다.
+// 기대효과가 비어 있으면 더미 값으로 채운다.
 function buildPlan(f, tone) {
   const sections = [];
   if ((f.background || '').trim()) sections.push({ id: uuid(), heading: '추진 배경', body: buildSectionBody('추진 배경', f.background, tone) });
@@ -671,18 +706,18 @@ function buildPlan(f, tone) {
   sections.push({
     id: uuid(),
     heading: '적용 대상',
-    body: (f.target || '').trim() ? buildSectionBody('적용 대상', f.target, tone) : NEEDS_CHECK,
+    body: (f.target || '').trim() ? buildSectionBody('적용 대상', f.target, tone) : dummyFor('target'),
   });
   if ((f.content || '').trim()) sections.push({ id: uuid(), heading: '주요 추진 내용', body: buildSectionBody('주요 추진 내용', f.content, tone) });
   sections.push({
     id: uuid(),
     heading: '추진 일정',
-    body: (f.schedule || '').trim() ? buildSectionBody('추진 일정', f.schedule, tone) : NEEDS_CHECK,
+    body: (f.schedule || '').trim() ? buildSectionBody('추진 일정', f.schedule, tone) : dummyFor('schedule'),
   });
   sections.push({
     id: uuid(),
     heading: '기대효과',
-    body: (f.expectedEffect || '').trim() ? alwaysItemize(f.expectedEffect, 4) : NEEDS_CHECK,
+    body: (f.expectedEffect || '').trim() ? alwaysItemize(f.expectedEffect, 4) : dummyFor('expectedEffect'),
   });
   if ((f.notes || '').trim()) sections.push({ id: uuid(), heading: '유의사항', body: buildSectionBody('유의사항', f.notes, tone) });
   if ((f.futurePlan || '').trim()) sections.push({ id: uuid(), heading: '향후 계획', body: buildSectionBody('향후 계획', f.futurePlan, tone) });
@@ -997,7 +1032,7 @@ function renderOfficialFormat(doc) {
   const infoTable = document.createElement('table');
   infoTable.className = 'official-info-table';
   const infoBody = document.createElement('tbody');
-  infoBody.appendChild(formTableRow('수신', findMeta(doc, '수신') || NEEDS_CHECK));
+  infoBody.appendChild(formTableRow('수신', findMeta(doc, '수신') || dummyFor('recipient')));
   infoBody.appendChild(formTableRow('제목', doc.title));
   infoTable.appendChild(infoBody);
   docPreview.appendChild(infoTable);
