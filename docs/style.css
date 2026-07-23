@@ -538,6 +538,24 @@ body {
   margin-right: 2px;
 }
 
+.official-sub-list {
+  margin: -6px 0 14px 22px;
+}
+
+.official-sub-item {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.official-attachment {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
 .official-end-mark {
   text-align: right;
   font-weight: 700;
@@ -551,6 +569,31 @@ body {
   color: var(--muted);
   padding-top: 14px;
   border-top: 1px solid var(--border);
+}
+
+/* --- 휴가신청서(leave) 서식: 결재란 --- */
+.approval-box {
+  margin-top: 24px;
+  border-collapse: collapse;
+  width: 220px;
+  margin-left: auto;
+}
+
+.approval-box td {
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+.approval-role {
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 4px;
+}
+
+.approval-sign {
+  height: 44px;
 }
 
 /* --- 안내문(notice) 서식: 테두리 박스 + 중앙정렬 --- */

@@ -23,74 +23,161 @@ const TYPE_META = {
 // 우선순위 순서대로 검사한다 (더 구체적인 유형을 일반적인 유형보다 먼저 확인).
 const TYPE_DETECTORS = [
   { type: 'tripReport', patterns: [/출장/] },
-  { type: 'leaveRequest', patterns: [/휴가|연차/] },
+  { type: 'leaveRequest', patterns: [/휴가\s*(신청|사용)|연차|반차|병가/] },
   { type: 'handover', patterns: [/인수인계/] },
   { type: 'plan', patterns: [/계획서|계획을|추진\s*계획/] },
   { type: 'meeting', patterns: [/회의록|착수\s*회의|킥오프|회의를/] },
   { type: 'memo', patterns: [/공문|협조\s*요청/] },
-  { type: 'notice', patterns: [/안내문/] },
+  { type: 'notice', patterns: [/안내문|안내드립니다|공지사항|공지드립니다/] },
   { type: 'report', patterns: [/보고서|결과\s*보고/] },
+];
+
+// 위 키워드 단서로 못 정한 경우, 제목 줄의 끝맺음(공공/사내 문서에서 흔한 관용구)으로
+// 한 번 더 판별한다 -- 본문 어디에나 나올 수 있는 낱말(예: "휴가", "계획")은 오탐 위험이
+// 있어 본문 전체가 아니라 "제목으로 쓰일 법한 첫 줄"에만 적용한다.
+const TITLE_SUFFIX_DETECTORS = [
+  { type: 'notice', pattern: /안내$/ },
+  { type: 'plan', pattern: /계획$/ },
+  { type: 'leaveRequest', pattern: /휴가$/ },
 ];
 
 function detectDocType(text) {
   for (const { type, patterns } of TYPE_DETECTORS) {
     if (patterns.some((re) => re.test(text))) return type;
   }
-  return 'report';
+  const firstLine = (text.split('\n').find((l) => l.trim()) || '').trim();
+  const bySuffix = TITLE_SUFFIX_DETECTORS.find(({ pattern }) => pattern.test(firstLine));
+  return bySuffix ? bySuffix.type : 'report';
 }
 
 // 유형별 필드 추출 스키마: label(라벨:값 매칭용) + cues(키워드 단서, 없으면 catch-all로 처리)
 const FIELD_SCHEMAS = {
   tripReport: [
+    { key: 'traveler', label: '출장자', cues: [/출장자/] },
+    { key: 'period', label: '출장기간', cues: [/출장\s*기간|기간/], isDateRange: true },
     { key: 'destination', label: '출장지', cues: [/출장지/] },
-    { key: 'period', label: '기간', cues: [/기간/], isDateRange: true },
-    { key: 'purpose', label: '목적', cues: [/목적/] },
-    { key: 'outcome', label: '성과', cues: [/성과/] },
-    { key: 'followup', label: '후속조치', cues: [/후속\s*조치/] },
+    { key: 'visitOrg', label: '방문기관', cues: [/방문\s*기관|방문처|거래처/] },
+    { key: 'purpose', label: '출장목적', cues: [/목적/] },
+    { key: 'schedule', label: '주요일정', cues: [/일정/] },
+    { key: 'activities', label: '수행내용', cues: [/수행\s*내용|한\s*일|업무\s*내용/] },
+    { key: 'negotiations', label: '주요협의사항', cues: [/협의|협상|미팅/] },
+    { key: 'outcome', label: '출장결과', cues: [/결과|성과/] },
+    { key: 'followup', label: '향후조치', cues: [/후속\s*조치|향후\s*조치/] },
+    { key: 'notes', label: '특이사항', cues: [/특이\s*사항/] },
   ],
   leaveRequest: [
-    { key: 'period', label: '기간', cues: [/기간/], isDateRange: true },
-    { key: 'reason', label: '사유', cues: [/사유|여행|개인\s*사정|가족/] },
-    { key: 'handover', label: '인수인계', cues: [/인수인계/] },
+    { key: 'applicant', label: '신청자', cues: [/신청자/] },
+    { key: 'department', label: '소속', cues: [/소속/] },
+    { key: 'position', label: '직급', cues: [/직급|직책/] },
+    { key: 'applyDate', label: '신청일', cues: [/신청일/] },
+    { key: 'period', label: '휴가기간', cues: [/휴가\s*기간|기간/], isDateRange: true },
+    { key: 'days', label: '휴가일수', cues: [/일수/] },
+    { key: 'leaveType', label: '휴가종류', cues: [/종류|연차|반차|병가|경조사/] },
+    { key: 'reason', label: '휴가사유', cues: [/사유|여행|개인\s*사정|가족/] },
+    { key: 'handover', label: '업무 인수인계 내용', cues: [/인수인계/] },
     { key: 'emergencyContact', label: '비상연락', cues: [/비상\s*연락|긴급\s*연락/] },
   ],
   handover: [
-    { key: 'currentDuties', label: '현재 담당 업무', cues: [/담당\s*업무/] },
-    { key: 'ongoingProjects', label: '진행 중인 프로젝트', cues: [/진행\s*중인?\s*프로젝트|프로젝트/] },
+    { key: 'handoverFrom', label: '인계자', cues: [/인계자/] },
+    { key: 'handoverTo', label: '인수자', cues: [/인수자/] },
+    { key: 'handoverDate', label: '인수인계일', cues: [/인수인계일/] },
+    { key: 'targetDuties', label: '인수인계 대상 업무', cues: [/대상\s*업무|담당\s*업무/] },
+    { key: 'progress', label: '업무별 진행 현황', cues: [/진행\s*현황|진행\s*중인?\s*프로젝트|프로젝트/] },
+    { key: 'remainingWork', label: '남은 작업', cues: [/남은\s*작업/] },
+    { key: 'materialsLocation', label: '관련 자료 위치', cues: [/자료\s*위치|자료는|폴더|드라이브/] },
+    { key: 'contact', label: '주요 연락처', cues: [/연락처/] },
     { key: 'notes', label: '주의사항', cues: [/주의\s*사항/] },
-    { key: 'contact', label: '연락처', cues: [/연락처/] },
     { key: 'schedule', label: '향후 일정', cues: [/향후\s*일정/] },
   ],
   plan: [
-    { key: 'purpose', label: '도입 목적', cues: [/목적/] },
-    { key: 'target', label: '적용 대상', cues: [/대상/] },
-    { key: 'expectedEffect', label: '예상 효과', cues: [/효과/] },
-    { key: 'schedule', label: '추진 일정', cues: [/일정/] },
+    { key: 'background', label: '추진배경', cues: [/배경/] },
+    { key: 'purpose', label: '추진목적', cues: [/목적/] },
+    { key: 'target', label: '적용대상', cues: [/대상/] },
+    { key: 'content', label: '주요추진내용', cues: [/추진\s*내용/] },
+    { key: 'schedule', label: '추진일정', cues: [/일정/] },
+    { key: 'expectedEffect', label: '기대효과', cues: [/효과/] },
+    { key: 'notes', label: '유의사항', cues: [/유의\s*사항|리스크|위험/] },
+    { key: 'futurePlan', label: '향후계획', cues: [/향후\s*계획/] },
   ],
   meeting: [
-    { key: 'date', label: '일시', cues: [/일시/] },
-    { key: 'place', label: '장소', cues: [/장소/] },
+    { key: 'date', label: '회의일시', cues: [/일시/] },
+    { key: 'place', label: '회의장소', cues: [/장소/] },
     { key: 'attendees', label: '참석자', cues: [/참석자/] },
-    { key: 'purpose', label: '안건', cues: [/안건|목적/] },
-    { key: 'decisions', label: '결정사항', cues: [/하기로\s*(했|했어|했습니다)|일정은/] },
-    { key: 'content', label: '논의 내용', cues: [] },
+    { key: 'purpose', label: '회의목적', cues: [/회의\s*목적/] },
+    { key: 'agenda', label: '안건', cues: [/안건/] },
+    { key: 'decisions', label: '결정사항', cues: [/결정|하기로\s*(했|했어|했습니다)/] },
+    { key: 'followup', label: '후속조치', cues: [/후속\s*조치/] },
+    { key: 'nextMeeting', label: '다음회의일정', cues: [/다음\s*회의/] },
+    { key: 'content', label: '주요논의내용', cues: [/내용/] },
   ],
   memo: [
     { key: 'recipient', label: '수신', cues: [/수신/] },
-    { key: 'purpose', label: '목적', cues: [/목적/] },
-    { key: 'content', label: '내용', cues: [] },
-    { key: 'contact', label: '담당자', cues: [/담당자|연락처/] },
+    { key: 'reference', label: '관련근거', cues: [/관련\s*근거|근거/] },
+    { key: 'requestContent', label: '요청사항', cues: [/요청\s*사항|안내\s*사항/] },
+    { key: 'deadline', label: '제출기한', cues: [/제출\s*기한|기한/] },
+    { key: 'submitMethod', label: '제출방법', cues: [/제출\s*방법/] },
+    { key: 'contact', label: '문의처', cues: [/담당자|연락처|문의처/] },
+    { key: 'attachment', label: '붙임', cues: [/붙임|첨부/] },
+    { key: 'content', label: '본문', cues: [/내용|본문/] },
   ],
   report: [
-    { key: 'purpose', label: '목적', cues: [/목적|배경/] },
-    { key: 'content', label: '내용', cues: [] },
+    { key: 'reportTarget', label: '보고대상', cues: [/보고\s*대상/] },
+    { key: 'author', label: '보고자', cues: [/보고자|작성자/] },
+    { key: 'date', label: '보고일자', cues: [/보고일자|일자/] },
+    { key: 'purpose', label: '보고목적', cues: [/목적|배경/] },
+    { key: 'progress', label: '추진현황', cues: [/추진\s*현황|진행\s*현황/] },
+    { key: 'reviewResult', label: '검토결과', cues: [/검토\s*결과/] },
+    { key: 'problems', label: '문제점', cues: [/문제점|이슈/] },
+    { key: 'improvement', label: '개선방안', cues: [/개선\s*방안|개선안/] },
+    { key: 'futurePlan', label: '향후계획', cues: [/향후\s*계획/] },
+    { key: 'notes', label: '특이사항', cues: [/특이\s*사항/] },
+    { key: 'content', label: '주요내용', cues: [/내용/] },
   ],
   notice: [
-    { key: 'target', label: '대상', cues: [/대상/] },
-    { key: 'purpose', label: '목적', cues: [/목적/] },
-    { key: 'content', label: '내용', cues: [] },
+    { key: 'target', label: '안내대상', cues: [/대상/] },
+    { key: 'purpose', label: '안내목적', cues: [/목적/] },
+    { key: 'period', label: '기간', cues: [/기간/], isDateRange: true },
+    { key: 'place', label: '장소', cues: [/장소/] },
+    { key: 'method', label: '신청방법', cues: [/신청\s*방법|참여\s*방법|제출\s*방법/] },
+    { key: 'notes', label: '유의사항', cues: [/유의\s*사항/] },
+    { key: 'inquiry', label: '문의처', cues: [/문의처|문의/] },
+    { key: 'content', label: '주요내용', cues: [/내용/] },
   ],
 };
+
+// 각 유형에서 "라벨:값"도 못 찾고 어떤 키워드 단서에도 안 걸린 줄이 최종적으로 담기는 항목.
+const CATCH_ALL_KEY = {
+  tripReport: 'activities',
+  leaveRequest: 'reason',
+  handover: 'notes',
+  plan: 'content',
+  meeting: 'content',
+  memo: 'content',
+  report: 'content',
+  notice: 'content',
+};
+
+// 유형별로 "이게 없으면 문서 자체가 성립하지 않는" 핵심 항목 -- 비어 있으면
+// 지어내지 않고 "확인 필요"로 표시한다 (날짜/이름/장소/담당자/기한 등).
+const CRITICAL_FIELDS = {
+  tripReport: ['traveler', 'period', 'destination', 'visitOrg'],
+  leaveRequest: ['applicant', 'department', 'period'],
+  handover: ['handoverFrom', 'handoverTo', 'handoverDate', 'materialsLocation'],
+  plan: ['target', 'schedule', 'expectedEffect'],
+  meeting: ['attendees', 'date', 'place'],
+  memo: ['recipient', 'deadline', 'attachment'],
+  report: ['reportTarget', 'author', 'reviewResult'],
+  notice: ['target', 'period', 'method', 'inquiry'],
+};
+
+const NEEDS_CHECK = '확인 필요';
+
+// 핵심 항목이 비어 있으면 "확인 필요"로, 그 외 선택 항목은 빈 문자열 그대로 둔다.
+function checkField(type, fields, key) {
+  const v = (fields[key] || '').trim();
+  if (v) return v;
+  return (CRITICAL_FIELDS[type] || []).includes(key) ? NEEDS_CHECK : '';
+}
 
 const DOC_TYPE_NAMES = '회의록|공문|보고서|안내문|계획서|인수인계서|휴가\\s*신청서|출장\\s*보고서';
 const INSTRUCTION_VERBS = '만들어\\s*줘|만들어줘|만들고\\s*싶어|만들고자\\s*합니다|정리하고\\s*싶어|정리해야\\s*합니다|정리하려고\\s*합니다|작성해\\s*주세요|작성해주세요|부탁드립니다|하나\\s*만들어줘';
@@ -130,13 +217,14 @@ function parseFreeText(rawText, forcedType) {
 
   const fieldValues = {};
   schema.forEach((f) => { fieldValues[f.key] = []; });
-  const catchAllKey = schema.some((f) => f.key === 'content') ? 'content' : schema[schema.length - 1].key;
+  const catchAllKey = CATCH_ALL_KEY[type] || schema[schema.length - 1].key;
 
   // 첫 줄은 제목으로 이미 소비했으므로 내용 추출 대상에서 제외한다.
   rawLines.slice(1).forEach((line) => {
     const labelMatch = line.match(LABEL_LINE_RE);
     if (labelMatch) {
-      const [, label, value] = labelMatch;
+      const [, rawLabel, value] = labelMatch;
+      const label = rawLabel.trim();
       const field = schema.find((f) => label.includes(f.label) || f.label.includes(label) || f.cues.some((re) => re.test(label)));
       if (field) {
         fieldValues[field.key].push(value.trim());
@@ -211,9 +299,22 @@ function detailedConnector(i, total) {
   return '이어서, ';
 }
 
-function applyTone(text, tone) {
+// register: 'record'이면 회의록처럼 "논의함/결정함" 식 명사형 기록체 어미를 쓴다
+// (문체 옵션과 별개로 문서 유형 자체의 정해진 어투이므로 formal/detailed에도 적용).
+function applyTone(text, tone, register) {
   const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean);
   if (items.length === 0) return '';
+
+  const finish = (line) => {
+    let t = line;
+    if (register === 'record') {
+      NOMINALIZE_MAP.forEach(([re, rep]) => {
+        t = t.replace(re, rep);
+      });
+    }
+    if (t && !/[.!?…]$/.test(t)) t += '.';
+    return t;
+  };
 
   if (tone === 'concise') {
     // 간결: 콤마 이전까지만, 명사형으로 축약, 짧게 자르고 불릿으로 -- 가장 분량이 짧다.
@@ -232,22 +333,52 @@ function applyTone(text, tone) {
   if (tone === 'detailed') {
     // 상세: 항목을 자르지 않고 완전한 문장으로, 연결어로 풀어써서 -- 가장 분량이 길다.
     return items
-      .map((line, i) => {
-        let t = line;
-        if (t && !/[.!?…]$/.test(t)) t += '.';
-        return detailedConnector(i, items.length) + t;
-      })
+      .map((line, i) => detailedConnector(i, items.length) + finish(line))
       .join(' ');
   }
 
   // 공식적 (기본값): 평서문 마침표, 불릿/연결어 없이 표준 문어체
+  return items.map((line) => finish(line)).join(' ');
+}
+
+// 문체와 무관하게 항상 짧은 불릿 목록으로 정리한다 (예: 계획서의 "기대효과").
+function alwaysItemize(text, max) {
+  const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean).slice(0, max || 4);
+  if (items.length === 0) return '';
+  return items.map((t) => `• ${t.replace(/[.!?…]+$/, '')}`).join('\n');
+}
+
+// 문체와 무관하게 항상 짧게 유지한다 (예: 휴가신청서의 "사유"는 상세 문체를 골라도 장황해지면 안 됨).
+function briefSentences(text, maxSentences) {
+  const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean).slice(0, maxSentences || 2);
+  if (items.length === 0) return '';
+  return items.map((t) => (/[.!?…]$/.test(t) ? t : `${t}.`)).join(' ');
+}
+
+// 공문 본문 전용: 항목이 여럿이면 줄바꿈을 유지해 렌더러가 "가./나./다."로
+// 나눠 그릴 수 있게 한다 (일반 문체 변환은 여러 줄을 한 문장으로 이어붙인다).
+function buildOfficialBody(text, tone) {
+  const items = (text || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) return '';
+  if (tone === 'concise') {
+    return items
+      .map((line) => {
+        let t = line.split(/[,，]/)[0].trim();
+        NOMINALIZE_MAP.forEach(([re, rep]) => {
+          t = t.replace(re, rep);
+        });
+        if (t.length > 36) t = `${t.slice(0, 33).trim()}…`;
+        return t;
+      })
+      .join('\n');
+  }
   return items
     .map((line) => {
       let t = line;
       if (t && !/[.!?…]$/.test(t)) t += '.';
       return t;
     })
-    .join(' ');
+    .join('\n');
 }
 
 // 상세 문체일 때만 항목 앞에 소제목에 맞는 도입 문장을 붙여 서술을 확장한다
@@ -268,8 +399,8 @@ function sectionLeadIn(heading) {
   return rule ? rule[1] : '세부 내용은 다음과 같습니다.';
 }
 
-function buildSectionBody(heading, rawText, tone) {
-  const toned = applyTone(rawText, tone);
+function buildSectionBody(heading, rawText, tone, register) {
+  const toned = applyTone(rawText, tone, register);
   if (!toned) return '';
   return tone === 'detailed' ? `${sectionLeadIn(heading)}\n${toned}` : toned;
 }
@@ -317,57 +448,87 @@ function closingFor(type, tone) {
   return byTone ? (byTone[tone] || byTone.formal) : null;
 }
 
+// 회의록: 기록형 문체("논의함/결정함")를 문체 옵션과 무관하게 사용하고,
+// 결정사항·후속조치는 "반드시" 별도 항목으로 남긴다(비어 있어도 항목 자체는 유지).
 function buildMeetingMinutes(f, tone) {
-  const sections = [
-    { id: uuid(), heading: '안건', body: buildSectionBody('안건', f.purpose, tone) },
-    { id: uuid(), heading: '논의 내용', body: buildSectionBody('논의 내용', f.content, tone) },
-  ];
-  if ((f.decisions || '').trim()) {
-    sections.push({ id: uuid(), heading: '결정사항 및 향후계획', body: buildSectionBody('결정사항', f.decisions, tone) });
+  const sections = [];
+  if ((f.purpose || '').trim()) {
+    sections.push({ id: uuid(), heading: '회의 목적', body: buildSectionBody('회의 목적', f.purpose, tone, 'record') });
   }
+  if ((f.agenda || '').trim()) {
+    sections.push({ id: uuid(), heading: '안건', body: buildSectionBody('안건', f.agenda, tone, 'record') });
+  }
+  sections.push({ id: uuid(), heading: '주요 논의 내용', body: buildSectionBody('주요 논의 내용', f.content, tone, 'record') });
+  sections.push({ id: uuid(), heading: '결정사항', body: buildSectionBody('결정사항', f.decisions, tone, 'record') });
+  sections.push({ id: uuid(), heading: '후속조치', body: buildSectionBody('후속조치', f.followup, tone, 'record') });
+
+  const closingParts = [closingFor('meeting', tone)];
+  if ((f.nextMeeting || '').trim()) closingParts.push(`다음 회의 일정: ${f.nextMeeting}`);
+
   return {
     title: f.title || TYPE_META.meeting.label,
     meta: [
-      { label: '일시', value: f.date || '' },
-      { label: '장소', value: f.place || '' },
-      { label: '참석자', value: f.attendees || '' },
+      { label: '회의일시', value: checkField('meeting', f, 'date') },
+      { label: '회의장소', value: checkField('meeting', f, 'place') },
+      { label: '참석자', value: checkField('meeting', f, 'attendees') },
     ],
     sections,
-    closing: closingFor('meeting', tone),
+    closing: closingParts.filter(Boolean).join(' '),
     footer: '',
   };
 }
 
+// 공문: 수신/제목 정보표 + 관련근거·본문·요청사항·제출기한·제출방법 번호매김 본문 +
+// 붙임 + "끝." (붙임은 렌더러가 "끝." 바로 앞에 별도로 그린다).
 function buildMemo(f, tone) {
-  const sections = [
-    { id: uuid(), heading: '목적', body: buildSectionBody('목적', f.purpose, tone) },
-    { id: uuid(), heading: '내용', body: buildSectionBody('내용', f.content, tone) },
-  ];
+  const sections = [];
+  if ((f.reference || '').trim()) {
+    sections.push({ id: uuid(), heading: '관련', body: applyTone(f.reference, 'formal') });
+  }
+  sections.push({ id: uuid(), heading: '내용', body: buildOfficialBody(f.content, tone) });
+  if ((f.requestContent || '').trim()) {
+    sections.push({ id: uuid(), heading: '요청사항', body: buildOfficialBody(f.requestContent, tone) });
+  }
+  sections.push({ id: uuid(), heading: '제출기한', body: checkField('memo', f, 'deadline') });
+  if ((f.submitMethod || '').trim()) {
+    sections.push({ id: uuid(), heading: '제출방법', body: f.submitMethod });
+  }
+
   return {
-    title: f.title || TYPE_META.memo.label,
-    meta: [
-      { label: '수신', value: f.recipient || '' },
-      { label: '날짜', value: f.date || '' },
-    ],
+    title: f.title && f.title !== TYPE_META.memo.label ? f.title : NEEDS_CHECK,
+    meta: [{ label: '수신', value: checkField('memo', f, 'recipient') }],
     sections,
     closing: closingFor('memo', tone),
     footer: f.contact || '',
+    attachment: checkField('memo', f, 'attachment'),
   };
 }
 
+// 보고서: 두괄식 -- 목적 다음 핵심 결론(검토결과)을 먼저 배치하고, 이어서
+// 현황/문제점/개선방안/향후계획 순으로 분석형으로 전개한다.
 function buildReport(f, tone) {
-  const sections = [
-    { id: uuid(), heading: '목적 및 배경', body: buildSectionBody('목적 및 배경', f.purpose, tone) },
-    { id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) },
-  ];
-  if ((f.conclusion || '').trim()) {
-    sections.push({ id: uuid(), heading: '결론 및 제언', body: buildSectionBody('결론 및 제언', f.conclusion, tone) });
+  const sections = [];
+  if ((f.purpose || '').trim()) {
+    sections.push({ id: uuid(), heading: '보고 목적', body: buildSectionBody('보고 목적', f.purpose, tone) });
   }
+  sections.push({
+    id: uuid(),
+    heading: '검토 결과',
+    body: (f.reviewResult || '').trim() ? buildSectionBody('검토 결과', f.reviewResult, tone) : NEEDS_CHECK,
+  });
+  sections.push({ id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) });
+  if ((f.progress || '').trim()) sections.push({ id: uuid(), heading: '추진 현황', body: buildSectionBody('추진 현황', f.progress, tone) });
+  if ((f.problems || '').trim()) sections.push({ id: uuid(), heading: '문제점', body: buildSectionBody('문제점', f.problems, tone) });
+  if ((f.improvement || '').trim()) sections.push({ id: uuid(), heading: '개선방안', body: buildSectionBody('개선방안', f.improvement, tone) });
+  if ((f.futurePlan || '').trim()) sections.push({ id: uuid(), heading: '향후 계획', body: buildSectionBody('향후 계획', f.futurePlan, tone) });
+  if ((f.notes || '').trim()) sections.push({ id: uuid(), heading: '특이사항', body: buildSectionBody('특이사항', f.notes, tone) });
+
   return {
     title: f.title || TYPE_META.report.label,
     meta: [
-      { label: '작성자', value: f.author || '' },
-      { label: '날짜', value: f.date || '' },
+      { label: '보고대상', value: checkField('report', f, 'reportTarget') },
+      { label: '보고자', value: checkField('report', f, 'author') },
+      { label: '보고일자', value: f.date || '' },
     ],
     sections,
     closing: closingFor('report', tone),
@@ -375,36 +536,68 @@ function buildReport(f, tone) {
   };
 }
 
+// 안내문: 공문보다 친절한 어투. 신청/참여 방법과 문의처는 필수로 확인 필요 표시 대상.
 function buildNotice(f, tone) {
   const sections = [
-    { id: uuid(), heading: '목적', body: buildSectionBody('목적', f.purpose, tone) },
+    { id: uuid(), heading: '안내 목적', body: buildSectionBody('안내 목적', f.purpose, tone) },
     { id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) },
+    {
+      id: uuid(),
+      heading: '신청/참여 방법',
+      body: (f.method || '').trim() ? buildSectionBody('신청 방법', f.method, tone) : NEEDS_CHECK,
+    },
   ];
+  if ((f.notes || '').trim()) {
+    sections.push({ id: uuid(), heading: '유의사항', body: buildSectionBody('유의사항', f.notes, tone) });
+  }
+
+  const closingPhraseMap = {
+    formal: '아래 내용을 확인해 주시기 바랍니다.',
+    concise: '확인 부탁드립니다.',
+    detailed: '자세한 사항은 아래 내용을 꼼꼼히 확인해 주시기 바라며, 궁금한 점이 있으면 문의처로 편하게 연락해 주세요.',
+  };
+
   return {
     title: f.title || TYPE_META.notice.label,
     meta: [
-      { label: '대상', value: f.target || '' },
-      { label: '날짜', value: f.date || '' },
+      { label: '안내대상', value: checkField('notice', f, 'target') },
+      { label: '기간', value: checkField('notice', f, 'period') },
+      { label: '장소', value: f.place || '' },
     ],
     sections,
-    closing: f.inquiry ? `문의처: ${f.inquiry}` : null,
+    closing: `${closingPhraseMap[tone] || closingPhraseMap.formal} (문의처: ${checkField('notice', f, 'inquiry')})`,
     footer: '',
   };
 }
 
+// 출장보고서: 사실/결과 중심. 출장 결과와 향후 조치는 "반드시" 포함(비어 있으면 확인 필요).
 function buildTripReport(f, tone) {
-  const sections = [
-    { id: uuid(), heading: '목적', body: buildSectionBody('목적', f.purpose, tone) },
-    { id: uuid(), heading: '성과', body: buildSectionBody('성과', f.outcome, tone) },
-  ];
-  if ((f.followup || '').trim()) {
-    sections.push({ id: uuid(), heading: '후속조치', body: buildSectionBody('후속조치', f.followup, tone) });
+  const sections = [];
+  if ((f.purpose || '').trim()) sections.push({ id: uuid(), heading: '출장 목적', body: buildSectionBody('출장 목적', f.purpose, tone) });
+  if ((f.schedule || '').trim()) sections.push({ id: uuid(), heading: '주요 일정', body: buildSectionBody('주요 일정', f.schedule, tone) });
+  sections.push({ id: uuid(), heading: '수행 내용', body: buildSectionBody('수행 내용', f.activities, tone) });
+  if ((f.negotiations || '').trim()) {
+    sections.push({ id: uuid(), heading: '주요 협의사항', body: buildSectionBody('주요 협의사항', f.negotiations, tone) });
   }
+  sections.push({
+    id: uuid(),
+    heading: '출장 결과',
+    body: (f.outcome || '').trim() ? buildSectionBody('출장 결과', f.outcome, tone) : NEEDS_CHECK,
+  });
+  sections.push({
+    id: uuid(),
+    heading: '향후 조치',
+    body: (f.followup || '').trim() ? buildSectionBody('향후 조치', f.followup, tone) : NEEDS_CHECK,
+  });
+  if ((f.notes || '').trim()) sections.push({ id: uuid(), heading: '특이사항', body: buildSectionBody('특이사항', f.notes, tone) });
+
   return {
     title: f.title || TYPE_META.tripReport.label,
     meta: [
-      { label: '출장지', value: f.destination || '' },
-      { label: '기간', value: f.period || '' },
+      { label: '출장자', value: checkField('tripReport', f, 'traveler') },
+      { label: '출장기간', value: checkField('tripReport', f, 'period') },
+      { label: '출장지', value: checkField('tripReport', f, 'destination') },
+      { label: '방문기관', value: checkField('tripReport', f, 'visitOrg') },
     ],
     sections,
     closing: closingFor('tripReport', tone),
@@ -412,53 +605,92 @@ function buildTripReport(f, tone) {
   };
 }
 
+// 휴가신청서: 사유는 문체와 무관하게 항상 1~2문장으로 짧게 유지한다.
 function buildLeaveRequest(f, tone) {
   const sections = [
-    { id: uuid(), heading: '사유', body: buildSectionBody('사유', f.reason, tone) },
+    { id: uuid(), heading: '휴가 사유', body: briefSentences(f.reason, 2) || NEEDS_CHECK },
   ];
   if ((f.handover || '').trim()) {
-    sections.push({ id: uuid(), heading: '인수인계', body: buildSectionBody('인수인계', f.handover, tone) });
+    sections.push({ id: uuid(), heading: '업무 인수인계 내용', body: buildSectionBody('업무 인수인계 내용', f.handover, tone) });
   }
   if ((f.emergencyContact || '').trim()) {
     sections.push({ id: uuid(), heading: '비상연락', body: buildSectionBody('비상연락', f.emergencyContact, tone) });
   }
   return {
     title: f.title || TYPE_META.leaveRequest.label,
-    meta: [{ label: '기간', value: f.period || '' }],
+    meta: [
+      { label: '신청자', value: checkField('leaveRequest', f, 'applicant') },
+      { label: '소속', value: checkField('leaveRequest', f, 'department') },
+      { label: '직급', value: f.position || '' },
+      { label: '신청일', value: f.applyDate || '' },
+      { label: '휴가기간', value: checkField('leaveRequest', f, 'period') },
+      { label: '휴가일수', value: f.days || '' },
+      { label: '휴가종류', value: f.leaveType || '' },
+    ],
     sections,
     closing: closingFor('leaveRequest', tone),
     footer: '',
   };
 }
 
+// 업무인수인계서: 실무 중심 표 형태. 인계자/인수자/일자/자료 위치는 확인 필요 대상.
 function buildHandover(f, tone) {
   const sectionDefs = [
-    ['currentDuties', '현재 담당 업무'],
-    ['ongoingProjects', '진행 중인 프로젝트'],
-    ['notes', '주의사항'],
-    ['contact', '연락처'],
-    ['schedule', '향후 일정'],
+    ['targetDuties', '인수인계 대상 업무', false],
+    ['progress', '업무별 진행 현황', false],
+    ['remainingWork', '남은 작업', false],
+    ['materialsLocation', '관련 자료 위치', true],
+    ['contact', '주요 연락처', false],
+    ['notes', '주의사항', false],
+    ['schedule', '향후 일정', false],
   ];
   return {
     title: f.title || TYPE_META.handover.label,
-    meta: [],
-    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: buildSectionBody(heading, f[key], tone) })),
+    meta: [
+      { label: '인계자', value: checkField('handover', f, 'handoverFrom') },
+      { label: '인수자', value: checkField('handover', f, 'handoverTo') },
+      { label: '인수인계일', value: checkField('handover', f, 'handoverDate') },
+    ],
+    sections: sectionDefs.map(([key, heading, critical]) => ({
+      id: uuid(),
+      heading,
+      body: critical ? checkField('handover', f, key) : buildSectionBody(heading, f[key], tone),
+    })),
     closing: null,
     footer: '',
   };
 }
 
+// 계획서: 배경→목적→대상→내용→일정→기대효과→유의사항→향후계획 순. 기대효과는
+// 문체와 무관하게 항상 2~4개 항목으로 정리하고, 실행계획처럼 보이도록 일정/대상/
+// 기대효과가 비어 있으면 확인 필요로 표시한다.
 function buildPlan(f, tone) {
-  const sectionDefs = [
-    ['purpose', '목적'],
-    ['target', '적용 대상'],
-    ['expectedEffect', '예상 효과'],
-    ['schedule', '추진 일정'],
-  ];
+  const sections = [];
+  if ((f.background || '').trim()) sections.push({ id: uuid(), heading: '추진 배경', body: buildSectionBody('추진 배경', f.background, tone) });
+  if ((f.purpose || '').trim()) sections.push({ id: uuid(), heading: '추진 목적', body: buildSectionBody('추진 목적', f.purpose, tone) });
+  sections.push({
+    id: uuid(),
+    heading: '적용 대상',
+    body: (f.target || '').trim() ? buildSectionBody('적용 대상', f.target, tone) : NEEDS_CHECK,
+  });
+  if ((f.content || '').trim()) sections.push({ id: uuid(), heading: '주요 추진 내용', body: buildSectionBody('주요 추진 내용', f.content, tone) });
+  sections.push({
+    id: uuid(),
+    heading: '추진 일정',
+    body: (f.schedule || '').trim() ? buildSectionBody('추진 일정', f.schedule, tone) : NEEDS_CHECK,
+  });
+  sections.push({
+    id: uuid(),
+    heading: '기대효과',
+    body: (f.expectedEffect || '').trim() ? alwaysItemize(f.expectedEffect, 4) : NEEDS_CHECK,
+  });
+  if ((f.notes || '').trim()) sections.push({ id: uuid(), heading: '유의사항', body: buildSectionBody('유의사항', f.notes, tone) });
+  if ((f.futurePlan || '').trim()) sections.push({ id: uuid(), heading: '향후 계획', body: buildSectionBody('향후 계획', f.futurePlan, tone) });
+
   return {
     title: f.title || TYPE_META.plan.label,
     meta: [],
-    sections: sectionDefs.map(([key, heading]) => ({ id: uuid(), heading, body: buildSectionBody(heading, f[key], tone) })),
+    sections,
     closing: closingFor('plan', tone),
     footer: '',
   };
@@ -675,20 +907,21 @@ function findMeta(doc, label) {
   return m ? m.value : '';
 }
 
-// 유형별로 실제 사용되는 문서 서식이 다르므로 네 가지 "서식 계열"로 나눠 렌더링한다:
-// official(공문 - 관공서/기업 공문 특유의 수신·제목 정보표 + 번호매김 본문 + "끝." 표기),
-// minutes(회의록 - 일시/장소/참석자 정보표 + 안건별 서술),
+// 유형별로 실제 사용되는 문서 서식이 다르므로 서식 계열로 나눠 렌더링한다:
+// official(공문 - 수신·제목 정보표 + 번호매김 본문 + 가/나/다 + "끝." 표기),
+// minutes(회의록·출장보고서 - 개요 정보표 + 안건/항목별 서술),
+// leave(휴가신청서 - 신청 정보표 + 사유 + 결재란),
 // report(보고서·계획서 - 로마자 번호 소제목),
 // notice(안내문 - 테두리 박스 + 중앙정렬),
-// table(출장보고서·휴가신청서·인수인계서 - 실제 사내 양식처럼 표 형태).
+// table(업무인수인계서 - 실제 사내 양식처럼 표 형태).
 const FORMAT_FAMILY = {
   memo: 'official',
   meeting: 'minutes',
+  tripReport: 'minutes',
   report: 'report',
   plan: 'report',
   notice: 'notice',
-  tripReport: 'table',
-  leaveRequest: 'table',
+  leaveRequest: 'leave',
   handover: 'table',
 };
 
@@ -751,7 +984,10 @@ function appendPlainSection(container, section, headingPrefixEl) {
   container.appendChild(wrap);
 }
 
-// --- official: 공문 서식 (수신/제목 정보표 + 번호매김 본문 + "끝." 표기) ---
+// --- official: 공문 서식 (수신/제목 정보표 + 번호매김 본문 + 가/나/다 하위항목 +
+// 붙임 + "끝." 표기) ---
+const SUB_LETTERS = ['가', '나', '다', '라', '마', '바', '사', '아'];
+
 function renderOfficialFormat(doc) {
   const title = document.createElement('h2');
   title.className = 'doc-title';
@@ -761,8 +997,7 @@ function renderOfficialFormat(doc) {
   const infoTable = document.createElement('table');
   infoTable.className = 'official-info-table';
   const infoBody = document.createElement('tbody');
-  infoBody.appendChild(formTableRow('수신', findMeta(doc, '수신') || '관련 부서'));
-  if (findMeta(doc, '날짜')) infoBody.appendChild(formTableRow('시행일자', findMeta(doc, '날짜')));
+  infoBody.appendChild(formTableRow('수신', findMeta(doc, '수신') || NEEDS_CHECK));
   infoBody.appendChild(formTableRow('제목', doc.title));
   infoTable.appendChild(infoBody);
   docPreview.appendChild(infoTable);
@@ -770,6 +1005,7 @@ function renderOfficialFormat(doc) {
   const body = document.createElement('div');
   body.className = 'official-body';
   doc.sections.forEach((section, i) => {
+    const lines = (section.body || '').split('\n').filter(Boolean);
     const p = document.createElement('p');
     p.className = 'official-numbered-para';
     const marker = document.createElement('span');
@@ -777,10 +1013,27 @@ function renderOfficialFormat(doc) {
     marker.textContent = `${i + 1}. `;
     p.appendChild(marker);
     const label = document.createElement('strong');
-    label.textContent = `${section.heading}: `;
+    label.textContent = section.heading;
     p.appendChild(label);
-    p.appendChild(document.createTextNode(section.body || ''));
-    body.appendChild(p);
+    if (lines.length <= 1) {
+      p.appendChild(document.createTextNode(`: ${lines[0] || ''}`));
+      body.appendChild(p);
+    } else {
+      body.appendChild(p);
+      const subList = document.createElement('div');
+      subList.className = 'official-sub-list';
+      lines.forEach((line, li) => {
+        const subP = document.createElement('p');
+        subP.className = 'official-sub-item';
+        const subMarker = document.createElement('span');
+        subMarker.className = 'official-number';
+        subMarker.textContent = `${SUB_LETTERS[li] || li + 1}. `;
+        subP.appendChild(subMarker);
+        subP.appendChild(document.createTextNode(line));
+        subList.appendChild(subP);
+      });
+      body.appendChild(subList);
+    }
   });
   if (doc.closing) {
     const closingP = document.createElement('p');
@@ -789,6 +1042,13 @@ function renderOfficialFormat(doc) {
     body.appendChild(closingP);
   }
   docPreview.appendChild(body);
+
+  if (doc.attachment) {
+    const attach = document.createElement('p');
+    attach.className = 'official-attachment';
+    attach.textContent = `붙임  ${doc.attachment}`;
+    docPreview.appendChild(attach);
+  }
 
   const endMark = document.createElement('p');
   endMark.className = 'official-end-mark';
@@ -803,12 +1063,42 @@ function renderOfficialFormat(doc) {
   }
 }
 
-// --- minutes: 회의록 서식 (일시/장소/참석자 정보표 + 안건별 서술) ---
+// --- minutes: 회의록/출장보고서 서식 (개요 정보표 + 항목별 서술) ---
 function renderMinutesFormat(doc) {
   appendTitleBlock(doc);
   appendMetaTable(doc);
   doc.sections.forEach((section) => appendPlainSection(docPreview, section));
   appendClosing(doc);
+}
+
+// --- leave: 휴가신청서 서식 (신청 정보표 + 사유 + 결재란) ---
+function appendApprovalBox() {
+  const table = document.createElement('table');
+  table.className = 'approval-box';
+  const tbody = document.createElement('tbody');
+  const roleRow = document.createElement('tr');
+  const signRow = document.createElement('tr');
+  ['담당', '팀장', '부서장'].forEach((role) => {
+    const th = document.createElement('td');
+    th.className = 'approval-role';
+    th.textContent = role;
+    roleRow.appendChild(th);
+    const td = document.createElement('td');
+    td.className = 'approval-sign';
+    signRow.appendChild(td);
+  });
+  tbody.appendChild(roleRow);
+  tbody.appendChild(signRow);
+  table.appendChild(tbody);
+  docPreview.appendChild(table);
+}
+
+function renderLeaveFormat(doc) {
+  appendTitleBlock(doc);
+  appendMetaTable(doc);
+  doc.sections.forEach((section) => appendPlainSection(docPreview, section));
+  appendClosing(doc);
+  appendApprovalBox();
 }
 
 // --- report: 보고서/계획서 서식 (로마자 번호 소제목) ---
@@ -874,6 +1164,7 @@ function renderTableFormat(doc) {
 const FORMAT_RENDERERS = {
   official: renderOfficialFormat,
   minutes: renderMinutesFormat,
+  leave: renderLeaveFormat,
   report: renderReportFormat,
   notice: renderNoticeFormat,
   table: renderTableFormat,
@@ -939,6 +1230,9 @@ async function buildDocxBlob() {
     });
   });
 
+  if (doc.attachment) {
+    children.push(new Paragraph({ children: [new TextRun({ text: `붙임  ${doc.attachment}`, font: FONT })] }));
+  }
   if (doc.closing) {
     children.push(new Paragraph({ children: [new TextRun({ text: doc.closing, font: FONT })] }));
   }
@@ -997,6 +1291,10 @@ async function buildPdfBlob() {
       pdf.moveDown();
     });
 
+    if (doc.attachment) {
+      pdf.font('Pretendard').fontSize(11).text(`붙임  ${doc.attachment}`);
+      pdf.moveDown(0.5);
+    }
     if (doc.closing) {
       pdf.font('Pretendard').fontSize(12).text(doc.closing, { align: 'center' });
     }
