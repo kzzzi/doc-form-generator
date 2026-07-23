@@ -1029,12 +1029,13 @@ function findMeta(doc, label) {
 }
 
 // 유형별로 실제 사용되는 문서 서식이 다르므로 서식 계열로 나눠 렌더링한다:
-// official(공문 - 수신·제목 정보표 + 번호매김 본문 + 가/나/다 + "끝." 표기),
+// official(공문 - 수신·제목 정보표 + 번호매김 본문 + 가/나/다 + "끝." 표기, 발신명의로 결재 대체),
 // minutes(회의록·출장보고서 - 개요 정보표 + 안건/항목별 서술),
-// leave(휴가신청서 - 신청 정보표 + 사유 + 결재란),
+// leave(휴가신청서 - 신청 정보표 + 사유),
 // report(보고서·계획서 - 로마자 번호 소제목),
 // notice(안내문 - 테두리 박스 + 중앙정렬),
 // table(업무인수인계서 - 실제 사내 양식처럼 표 형태).
+// 공문·안내문을 제외한 모든 유형은 제목 영역 우측 상단에 담당/팀장/부서장 결재란을 공통으로 표시한다.
 const FORMAT_FAMILY = {
   memo: 'official',
   meeting: 'minutes',
@@ -1049,13 +1050,17 @@ const FORMAT_FAMILY = {
 const ROMAN_NUMERALS = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ'];
 
 function appendTitleBlock(doc) {
+  const header = document.createElement('div');
+  header.className = 'doc-header doc-header--with-approval';
+  header.appendChild(buildApprovalBox());
   const title = document.createElement('h2');
   title.className = 'doc-title';
   title.textContent = doc.title;
-  docPreview.appendChild(title);
+  header.appendChild(title);
   const underline = document.createElement('div');
   underline.className = 'doc-underline';
-  docPreview.appendChild(underline);
+  header.appendChild(underline);
+  docPreview.appendChild(header);
 }
 
 function formTableRow(label, value) {
@@ -1192,13 +1197,20 @@ function renderMinutesFormat(doc) {
   appendClosing(doc);
 }
 
-// --- leave: 휴가신청서 서식 (신청 정보표 + 사유 + 결재란) ---
-function appendApprovalBox() {
+// --- 결재란: 담당/팀장/부서장 (제목 영역 우측 상단에 배치, official·notice 제외 전 유형 공통) ---
+function buildApprovalBox() {
+  const slot = document.createElement('div');
+  slot.className = 'approval-slot';
   const table = document.createElement('table');
   table.className = 'approval-box';
   const tbody = document.createElement('tbody');
   const roleRow = document.createElement('tr');
   const signRow = document.createElement('tr');
+  const corner = document.createElement('td');
+  corner.className = 'approval-corner';
+  corner.rowSpan = 2;
+  corner.textContent = '결재';
+  roleRow.appendChild(corner);
   ['담당', '팀장', '부서장'].forEach((role) => {
     const th = document.createElement('td');
     th.className = 'approval-role';
@@ -1211,15 +1223,16 @@ function appendApprovalBox() {
   tbody.appendChild(roleRow);
   tbody.appendChild(signRow);
   table.appendChild(tbody);
-  docPreview.appendChild(table);
+  slot.appendChild(table);
+  return slot;
 }
 
+// --- leave: 휴가신청서 서식 (신청 정보표 + 사유) ---
 function renderLeaveFormat(doc) {
   appendTitleBlock(doc);
   appendMetaTable(doc);
   doc.sections.forEach((section) => appendPlainSection(docPreview, section));
   appendClosing(doc);
-  appendApprovalBox();
 }
 
 // --- report: 보고서/계획서 서식 (로마자 번호 소제목) ---

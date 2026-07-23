@@ -447,6 +447,15 @@ body {
   margin: 0 auto 26px;
 }
 
+/* 제목 영역 + 우측 상단 결재란을 함께 담는 헤더 (official·notice 제외 전 유형 공통) */
+.doc-header {
+  position: relative;
+}
+
+.doc-header--with-approval {
+  padding-top: 80px;
+}
+
 /* 세 가지 표(일반 메타/공문 정보표/양식표)가 공유하는 라벨·값 셀 스타일 */
 .doc-meta-table,
 .official-info-table,
@@ -571,12 +580,16 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* --- 휴가신청서(leave) 서식: 결재란 --- */
+/* --- 결재란: 제목 영역 우측 상단 배치 (official·notice 제외 공통) --- */
+.approval-slot {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
 .approval-box {
-  margin-top: 24px;
   border-collapse: collapse;
-  width: 220px;
-  margin-left: auto;
+  width: 204px;
 }
 
 .approval-box td {
@@ -584,16 +597,28 @@ body {
   text-align: center;
 }
 
+.approval-corner {
+  width: 20px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  writing-mode: vertical-rl;
+  padding: 4px 2px;
+}
+
 .approval-role {
   background: var(--bg);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   padding: 6px 4px;
 }
 
 .approval-sign {
-  height: 44px;
+  height: 42px;
+  width: 61px;
 }
 
 /* --- 안내문(notice) 서식: 테두리 박스 + 중앙정렬 --- */
@@ -614,10 +639,13 @@ body {
   margin-top: 20px;
   text-align: center;
   font-size: 13px;
+  line-height: 1.85;
+  letter-spacing: 0.1px;
+  word-break: keep-all;
   color: var(--navy);
   background: var(--accent-soft);
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 14px 20px;
 }
 
 /* --- Step 4: 다운로드 --- */
