@@ -202,6 +202,15 @@ const DUMMY_VALUES = {
   followup: '관련 부서와 협의하여 후속 조치를 진행함.',
   reason: '개인 사정으로 인한 휴가 사용.',
   title: '문서 제목(예시)',
+  activities: '현장 방문 및 관계자 협의를 통해 관련 업무를 수행함.',
+  decisions: '제시된 안건에 대해 참석자 간 협의를 거쳐 실행하기로 결정함.',
+  content: '세부 내용은 관련 자료를 참고하여 정리함.',
+  purpose: '부서 간 원활한 협조와 업무 효율성 제고를 위함.',
+  targetDuties: '정기 보고 업무 및 진행 중인 프로젝트 전반.',
+  progress: '각 업무는 정상적으로 진행 중이며 특이사항 없음.',
+  remainingWork: '인수인계일 기준 진행 중인 업무는 순차적으로 마무리할 예정.',
+  contact: '담당 부서 대표 연락처 및 사내 메신저',
+  notes: '변경 사항 발생 시 관련 부서와 공유 예정.',
 };
 
 function dummyFor(key) {
@@ -210,7 +219,7 @@ function dummyFor(key) {
 
 // 문장형 서술어로 끝나는지 판단 -- "이름/직급"처럼 단답이어야 할 항목에
 // 사용자가 쓴 문장을 그대로 옮겨 담지 않기 위한 용도.
-const SENTENCE_ENDING_RE = /(다|요|죠|네|어|아|해|야|음|함|됨|임|든|지|까|구요|드립니다|바랍니다|습니다|합니다|입니다|는데|한데|근데)\.?\s*$/;
+const SENTENCE_ENDING_RE = /(다|요|죠|네|어|아|해|야|래|돼|음|함|됨|임|든|지|까|구요|드립니다|바랍니다|습니다|합니다|입니다|는데|한데|근데)\.?\s*$/;
 function looksLikeSentence(text) {
   return SENTENCE_ENDING_RE.test((text || '').trim());
 }
@@ -398,7 +407,8 @@ const CASUAL_TO_FORMAL_MAP = [
   [/거예요\.?$/, '예정입니다'],
   [/거야\.?$/, '예정입니다'],
   [/할게(요)?\.?$/, '하겠습니다'],
-  [/할래(요)?\.?$/, '하겠습니다'],
+  [/야\s*돼(요)?\.?$/, '야 합니다'],
+  [/돼(요)?\.?$/, '됩니다'],
   [/했었어(요)?\.?$/, '했었습니다'],
   [/했었다\.?$/, '했었습니다'],
   [/갔다\s*왔어(요)?\.?$/, '다녀왔습니다'],
@@ -424,7 +434,29 @@ const CASUAL_TO_FORMAL_MAP = [
   [/어요\.?$/, '습니다'],
 ];
 
+// "쉴래/보낼래/올릴래"처럼 "-ㄹ래" 어미는 동사 어간에 따라 받침이 다르게 붙으므로
+// 단순 정규식 치환으로는 안 되고, 어미 앞 음절의 ㄹ 받침을 떼어낸 뒤 "겠습니다"를
+// 붙여야 한다("할래" -> "하겠습니다"뿐 아니라 "쉴래" -> "쉬겠습니다"도 되게 하기 위함).
+const RIEUL_LAE_RE = /래(요)?\.?$/;
+function stripTrailingRieul(ch) {
+  const code = ch.charCodeAt(0) - 0xac00;
+  if (code < 0 || code > 11171) return ch;
+  const jong = code % 28;
+  if (jong !== 8) return ch; // 순수 ㄹ 받침(8)이 아니면(겹받침 포함) 손대지 않는다.
+  return String.fromCharCode(code - jong + 0xac00);
+}
+function formalizeRieulVolitional(line) {
+  const m = RIEUL_LAE_RE.exec(line);
+  if (!m || m.index < 1) return null;
+  const idx = m.index - 1;
+  const stemChar = stripTrailingRieul(line[idx]);
+  if (stemChar === line[idx]) return null;
+  return `${line.slice(0, idx)}${stemChar}겠습니다`;
+}
+
 function formalizeRegister(line) {
+  const rieulLae = formalizeRieulVolitional(line);
+  if (rieulLae) return rieulLae;
   let t = line;
   for (const [re, rep] of CASUAL_TO_FORMAL_MAP) {
     if (re.test(t)) {
@@ -605,9 +637,9 @@ function buildMeetingMinutes(f, tone) {
   if ((f.agenda || '').trim()) {
     sections.push({ id: uuid(), heading: '안건', body: buildSectionBody('안건', f.agenda, tone, 'record') });
   }
-  sections.push({ id: uuid(), heading: '주요 논의 내용', body: buildSectionBody('주요 논의 내용', f.content, tone, 'record') });
-  sections.push({ id: uuid(), heading: '결정사항', body: buildSectionBody('결정사항', f.decisions, tone, 'record') });
-  sections.push({ id: uuid(), heading: '후속조치', body: buildSectionBody('후속조치', f.followup, tone, 'record') });
+  sections.push({ id: uuid(), heading: '주요 논의 내용', body: buildSectionBody('주요 논의 내용', f.content, tone, 'record') || dummyFor('content') });
+  sections.push({ id: uuid(), heading: '결정사항', body: buildSectionBody('결정사항', f.decisions, tone, 'record') || dummyFor('decisions') });
+  sections.push({ id: uuid(), heading: '후속조치', body: buildSectionBody('후속조치', f.followup, tone, 'record') || dummyFor('followup') });
 
   const closingParts = [closingFor('meeting', tone)];
   if ((f.nextMeeting || '').trim()) closingParts.push(`다음 회의 일정: ${f.nextMeeting}`);
@@ -632,7 +664,7 @@ function buildMemo(f, tone) {
   if ((f.reference || '').trim()) {
     sections.push({ id: uuid(), heading: '관련', body: applyTone(f.reference, 'formal') });
   }
-  sections.push({ id: uuid(), heading: '내용', body: buildOfficialBody(f.content, tone) });
+  sections.push({ id: uuid(), heading: '내용', body: buildOfficialBody(f.content, tone) || dummyFor('content') });
   if ((f.requestContent || '').trim()) {
     sections.push({ id: uuid(), heading: '요청사항', body: buildOfficialBody(f.requestContent, tone) });
   }
@@ -663,7 +695,7 @@ function buildReport(f, tone) {
     heading: '검토 결과',
     body: (f.reviewResult || '').trim() ? buildSectionBody('검토 결과', f.reviewResult, tone) : dummyFor('reviewResult'),
   });
-  sections.push({ id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) });
+  sections.push({ id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) || dummyFor('content') });
   if ((f.progress || '').trim()) sections.push({ id: uuid(), heading: '추진 현황', body: buildSectionBody('추진 현황', f.progress, tone) });
   if ((f.problems || '').trim()) sections.push({ id: uuid(), heading: '문제점', body: buildSectionBody('문제점', f.problems, tone) });
   if ((f.improvement || '').trim()) sections.push({ id: uuid(), heading: '개선방안', body: buildSectionBody('개선방안', f.improvement, tone) });
@@ -686,8 +718,8 @@ function buildReport(f, tone) {
 // 안내문: 공문보다 친절한 어투. 신청/참여 방법과 문의처는 비어 있으면 더미 값 대상.
 function buildNotice(f, tone) {
   const sections = [
-    { id: uuid(), heading: '안내 목적', body: buildSectionBody('안내 목적', f.purpose, tone) },
-    { id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) },
+    { id: uuid(), heading: '안내 목적', body: buildSectionBody('안내 목적', f.purpose, tone) || dummyFor('purpose') },
+    { id: uuid(), heading: '주요 내용', body: buildSectionBody('주요 내용', f.content, tone) || dummyFor('content') },
     {
       id: uuid(),
       heading: '신청/참여 방법',
@@ -722,7 +754,7 @@ function buildTripReport(f, tone) {
   const sections = [];
   if ((f.purpose || '').trim()) sections.push({ id: uuid(), heading: '출장 목적', body: buildSectionBody('출장 목적', f.purpose, tone) });
   if ((f.schedule || '').trim()) sections.push({ id: uuid(), heading: '주요 일정', body: buildSectionBody('주요 일정', f.schedule, tone) });
-  sections.push({ id: uuid(), heading: '수행 내용', body: buildSectionBody('수행 내용', f.activities, tone) });
+  sections.push({ id: uuid(), heading: '수행 내용', body: buildSectionBody('수행 내용', f.activities, tone) || dummyFor('activities') });
   if ((f.negotiations || '').trim()) {
     sections.push({ id: uuid(), heading: '주요 협의사항', body: buildSectionBody('주요 협의사항', f.negotiations, tone) });
   }
@@ -780,16 +812,17 @@ function buildLeaveRequest(f, tone) {
   };
 }
 
-// 업무인수인계서: 실무 중심 표 형태. 인계자/인수자/일자/자료 위치는 더미 값 대상.
+// 업무인수인계서: 실무 중심 표 형태. 모든 항목(인계자/인수자/일자 및 각 섹션)은
+// 입력에 없으면 더미 값으로 채워 빈 칸 없이 나온다.
 function buildHandover(f, tone) {
   const sectionDefs = [
-    ['targetDuties', '인수인계 대상 업무', false],
-    ['progress', '업무별 진행 현황', false],
-    ['remainingWork', '남은 작업', false],
-    ['materialsLocation', '관련 자료 위치', true],
-    ['contact', '주요 연락처', false],
-    ['notes', '주의사항', false],
-    ['schedule', '향후 일정', false],
+    ['targetDuties', '인수인계 대상 업무'],
+    ['progress', '업무별 진행 현황'],
+    ['remainingWork', '남은 작업'],
+    ['materialsLocation', '관련 자료 위치'],
+    ['contact', '주요 연락처'],
+    ['notes', '주의사항'],
+    ['schedule', '향후 일정'],
   ];
   return {
     title: f.title || TYPE_META.handover.label,
@@ -798,10 +831,10 @@ function buildHandover(f, tone) {
       { label: '인수자', value: checkField('handover', f, 'handoverTo') },
       { label: '인수인계일', value: checkField('handover', f, 'handoverDate') },
     ],
-    sections: sectionDefs.map(([key, heading, critical]) => ({
+    sections: sectionDefs.map(([key, heading]) => ({
       id: uuid(),
       heading,
-      body: critical ? checkField('handover', f, key) : buildSectionBody(heading, f[key], tone),
+      body: buildSectionBody(heading, f[key], tone) || dummyFor(key),
     })),
     closing: null,
     footer: '',
